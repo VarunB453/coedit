@@ -1,11 +1,13 @@
 import asyncio
+from datetime import timedelta
 
 from asgiref.sync import async_to_sync
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import Client, TestCase, TransactionTestCase, override_settings
+from django.utils import timezone
 
 from editor.models import DocumentUpdate, FileEntry, Workspace, WorkspaceMembership
 from editor.socket.consumers import EditorConsumer
@@ -28,10 +30,41 @@ class WorkspaceFileApiTests(TestCase):
             content_type="application/json",
         )
 
+    def test_registration_login_and_logout_use_authenticated_sessions(self):
+        client = Client(enforce_csrf_checks=True)
+        csrf = client.get("/api/csrf/").json()["csrfToken"]
+        credentials = {"username": "new-member", "password": "C0llab!Long-passphrase-9"}
+        registered = client.post(
+            "/api/auth/register/",
+            data=credentials,
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(registered.status_code, 201)
+        self.assertEqual(client.get("/api/auth/session/").json()["username"], "new-member")
+
+        csrf = client.get("/api/csrf/").json()["csrfToken"]
+        logged_out = client.post("/api/auth/logout/", HTTP_X_CSRFTOKEN=csrf)
+        self.assertEqual(logged_out.status_code, 200)
+        self.assertEqual(client.get("/api/auth/session/").status_code, 401)
+
+        csrf = client.get("/api/csrf/").json()["csrfToken"]
+        logged_in = client.post(
+            "/api/auth/session/",
+            data=credentials,
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(logged_in.status_code, 200)
+        self.assertEqual(client.get("/api/auth/session/").json()["username"], "new-member")
+
     def test_create_list_and_reject_duplicate_sibling_names(self):
         created = self.create_entry("notes.txt")
         self.assertEqual(created.status_code, 201)
         self.assertEqual(created.json()["name"], "notes.txt")
+        detail = self.client.get(f"{self.files_url}{created.json()['id']}/")
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["id"], created.json()["id"])
 
         duplicate = self.create_entry("NOTES.txt")
         self.assertEqual(duplicate.status_code, 409)
@@ -81,6 +114,7 @@ class WorkspaceFileApiTests(TestCase):
         self.client.force_login(viewer)
 
         self.assertEqual(self.client.get(self.files_url).status_code, 200)
+        self.assertEqual(self.client.get(f"{self.files_url}{entry['id']}/").status_code, 200)
         create = self.create_entry("other.txt")
         update = self.client.patch(
             f"{self.files_url}{entry['id']}/",
@@ -122,6 +156,47 @@ class WorkspaceFileApiTests(TestCase):
         self.assertEqual(response.status_code, 404)
         legacy.refresh_from_db()
         self.assertIsNone(legacy.owner_id)
+
+    def test_api_mutations_require_a_csrf_token(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.owner)
+        url = f"/api/workspaces/{self.workspace_id}/files/"
+        payload = {"name": "csrf.txt", "kind": "file"}
+
+        rejected = client.post(url, data=payload, content_type="application/json")
+        self.assertEqual(rejected.status_code, 403)
+
+        token = client.get("/api/csrf/").json()["csrfToken"]
+        accepted = client.post(
+            url,
+            data=payload,
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(accepted.status_code, 201)
+
+    def test_initialization_lease_allows_only_one_editor_to_seed_document(self):
+        content = {
+            "type": "doc",
+            "content": [{"type": "heading", "attrs": {"level": 1}, "content": [{"type": "text", "text": "Legacy"}]}],
+        }
+        document = FileEntry.objects.create(
+            workspace=self.workspace,
+            name="legacy.md",
+            kind=FileEntry.Kind.FILE,
+            content=content,
+        )
+        url = f"/api/workspaces/{self.workspace_id}/files/{document.id}/initialize/"
+
+        first = self.client.post(url)
+        second = self.client.post(url)
+        self.assertEqual(first.json(), {"ready": True, "initialize": True})
+        self.assertFalse(second.json()["ready"])
+
+        document.yjs_initializing_until = timezone.now() - timedelta(seconds=1)
+        document.save(update_fields=["yjs_initializing_until"])
+        retry = self.client.post(url)
+        self.assertEqual(retry.json(), {"ready": True, "initialize": True})
 
 
 @override_settings(CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}})
@@ -206,6 +281,15 @@ class DurableCollaborationTests(TransactionTestCase):
 
             for communicator in (first, second, isolated, viewer):
                 await communicator.disconnect()
+
+            reconnected = WebsocketCommunicator(
+                owner_app, f"/ws/editor/{self.document.id}"
+            )
+            connected, _ = await reconnected.connect()
+            self.assertTrue(connected)
+            await reconnected.send_to(bytes_data=b"\x00\x00\x01\x00")
+            self.assertEqual(await reconnected.receive_from(timeout=1), frame)
+            await reconnected.disconnect()
 
         async_to_sync(exercise_rooms)()
         self.assertEqual(DocumentUpdate.objects.filter(document=self.document).count(), 1)

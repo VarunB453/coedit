@@ -74,29 +74,6 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
     []
   );
 
-  const ydoc = useMemo(() => new Y.Doc(), [fileId]);
-  const provider = useMemo(() => {
-    const apiBase =
-      import.meta.env.VITE_API_URL ??
-      (window.location.hostname === "localhost"
-        ? "http://localhost:8000"
-        : window.location.origin);
-    const websocketBase = apiBase.replace(/^http/, "ws").replace(/\/$/, "");
-    return new WebsocketProvider(`${websocketBase}/ws/editor/${fileId}`, fileId, ydoc);
-  }, [fileId, ydoc]);
-
-  useEffect(() => {
-    provider.awareness.setLocalStateField("user", {
-      name: username,
-      color: colors[randomInt(0, colors.length - 1)],
-    });
-    return () => {
-      provider.destroy();
-      ydoc.destroy();
-    };
-  }, [provider, username, ydoc]);
-
-  // TODO: reset form when room changes
   const { manager, state, onChange } = useRemirror({
     extensions: () => [
       new BoldExtension(),

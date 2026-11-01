@@ -312,7 +312,7 @@ def workspace_files(request, workspace_id):
 	return JsonResponse(_serialize(entry), status=201)
 
 
-@require_http_methods(["PATCH", "DELETE"])
+@require_http_methods(["GET", "PATCH", "DELETE"])
 def workspace_file(request, workspace_id, file_id):
 	if not _authenticated(request):
 		return _error("Authentication required.", 401)
@@ -325,6 +325,8 @@ def workspace_file(request, workspace_id, file_id):
 	role = _workspace_role(entry.workspace, request.user)
 	if role is None:
 		return _error("File or folder was not found.", 404)
+	if request.method == "GET":
+		return JsonResponse(_serialize(entry))
 	if role == WorkspaceMembership.Role.VIEWER:
 		return _error("Viewer access is read-only.", 403)
 
