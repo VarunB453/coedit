@@ -34,16 +34,7 @@ def _workspace_role(workspace, user):
 	membership = WorkspaceMembership.objects.filter(workspace=workspace, user=user).first()
 	if membership:
 		return membership.role
-	# Existing UUID workspaces predate ownership; their first authenticated visitor claims them.
-	with transaction.atomic():
-		locked = Workspace.objects.select_for_update().get(id=workspace.id)
-		if locked.owner_id is None and not locked.memberships.exists():
-			locked.owner = user
-			locked.save(update_fields=["owner"])
-			return "owner"
-		if locked.owner_id == user.id:
-			return "owner"
-	return WorkspaceMembership.objects.filter(workspace=workspace, user=user).values_list("role", flat=True).first()
+	return None
 
 
 @require_http_methods(["GET"])

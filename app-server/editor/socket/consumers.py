@@ -3,6 +3,7 @@ import hashlib
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.auth.models import AnonymousUser
+from django.db import IntegrityError, transaction
 
 from editor.models import DocumentUpdate, FileEntry, Workspace, WorkspaceMembership
 
@@ -62,6 +63,8 @@ class EditorConsumer(AsyncWebsocketConsumer):
             if message_type == 0:
                 sync_type, offset = _read_var_uint(bytes_data, offset)
                 if sync_type in (1, 2):
+                    if self.role == WorkspaceMembership.Role.VIEWER:
+                        return
                     update_length, update_offset = _read_var_uint(bytes_data, offset)
                     update = bytes_data[update_offset:update_offset + update_length]
                     if len(update) != update_length:
@@ -84,9 +87,6 @@ class EditorConsumer(AsyncWebsocketConsumer):
                     self.room_group_name,
                     {"type": "editor_message", "bytes_data": bytes_data},
                 )
-                return
-            if message_type == 2:
-                await self.send(bytes_data=_write_var_uint(3))
                 return
             raise ValueError("Unsupported Yjs message")
         except (IndexError, ValueError):
@@ -121,12 +121,16 @@ class EditorConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def _persist_update(self, update):
         digest = hashlib.sha256(update).hexdigest()
-        _, created = DocumentUpdate.objects.get_or_create(
-            document_id=self.document_id,
-            update_hash=digest,
-            defaults={"update": update, "author_id": self.scope["user"].id},
-        )
-        return created
+        try:
+            with transaction.atomic():
+                _, created = DocumentUpdate.objects.get_or_create(
+                    document_id=self.document_id,
+                    update_hash=digest,
+                    defaults={"update": update, "author_id": self.scope["user"].id},
+                )
+                return created
+        except IntegrityError:
+            return False
 
     @database_sync_to_async
     def _load_updates(self):

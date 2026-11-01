@@ -39,6 +39,7 @@ export interface Props {
   fileId: string;
   initialContent: Record<string, unknown> | unknown[];
   onContentChange: (content: any) => void;
+  editable?: boolean;
 }
 
 const colors = [
@@ -54,7 +55,7 @@ const colors = [
 ];
 
 const Editor: React.FC<Props> = (props) => {
-  const { username, fileId, initialContent, onContentChange } = props;
+  const { username, fileId, initialContent, onContentChange, editable = true } = props;
 
   // remirror error handler
   const onError: InvalidContentHandler = useCallback(
@@ -120,6 +121,7 @@ const Editor: React.FC<Props> = (props) => {
       <Remirror
         manager={manager}
         initialContent={state}
+        editable={editable}
         placeholder="Start typing...Please be respectful :)"
         classNames={[
           "p-4 focus:outline-none h-96 overflow-y-auto scrollbar-hide prose lg:prose-xl prose-p:m-0",

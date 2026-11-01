@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.db.models.functions import Lower
@@ -13,7 +14,11 @@ class Workspace(models.Model):
 	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 	name = models.CharField(max_length=100, default="Untitled workspace")
 	owner = models.ForeignKey(
-		"auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="owned_workspaces"
+		settings.AUTH_USER_MODEL,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="owned_workspaces",
 	)
 	created_at = models.DateTimeField(auto_now_add=True)
 
@@ -24,7 +29,7 @@ class WorkspaceMembership(models.Model):
 		VIEWER = "viewer", "Viewer"
 
 	workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="memberships")
-	user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="workspace_memberships")
+	user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="workspace_memberships")
 	role = models.CharField(max_length=10, choices=Role.choices, default=Role.VIEWER)
 	created_at = models.DateTimeField(auto_now_add=True)
 
@@ -65,7 +70,11 @@ class FileEntry(models.Model):
 class DocumentUpdate(models.Model):
 	document = models.ForeignKey(FileEntry, on_delete=models.CASCADE, related_name="yjs_updates")
 	author = models.ForeignKey(
-		"auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="document_updates"
+		settings.AUTH_USER_MODEL,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="document_updates",
 	)
 	update_hash = models.CharField(max_length=64)
 	update = models.BinaryField()
