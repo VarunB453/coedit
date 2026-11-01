@@ -1,6 +1,7 @@
 import asyncio
 
 from asgiref.sync import async_to_sync
+from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -8,6 +9,7 @@ from django.test import TestCase, TransactionTestCase, override_settings
 
 from editor.models import DocumentUpdate, FileEntry, Workspace, WorkspaceMembership
 from editor.socket.consumers import EditorConsumer
+from editor.socket.routing import websocket_urlpatterns
 
 
 class WorkspaceFileApiTests(TestCase):
@@ -102,13 +104,14 @@ class WorkspaceFileApiTests(TestCase):
         self.assertEqual(response.json()["role"], "editor")
         self.assertTrue(WorkspaceMembership.objects.filter(workspace=self.workspace, user=editor).exists())
 
+        viewer = get_user_model().objects.create_user(username="viewer", password="password")
         WorkspaceMembership.objects.create(
-            workspace=self.workspace, user=editor, role=WorkspaceMembership.Role.EDITOR
+            workspace=self.workspace, user=viewer, role=WorkspaceMembership.Role.VIEWER
         )
         self.client.force_login(editor)
         denied = self.client.post(
             members_url,
-            data={"username": "viewer", "role": "viewer"},
+            data={"username": "viewer", "role": "editor"},
             content_type="application/json",
         )
         self.assertEqual(denied.status_code, 403)
@@ -142,6 +145,7 @@ class DurableCollaborationTests(TransactionTestCase):
 
     def consumer(self, user, document_id=None):
         consumer = EditorConsumer({"user": user})
+        consumer.scope = {"user": user}
         consumer.document_id = str(document_id or self.document.id)
         return consumer
 
@@ -161,7 +165,7 @@ class DurableCollaborationTests(TransactionTestCase):
         self.assertEqual([bytes(value) for value in recovered], [update])
 
     def authenticated_app(self, user):
-        inner = EditorConsumer.as_asgi()
+        inner = URLRouter(websocket_urlpatterns)
 
         async def app(scope, receive, send):
             scope = dict(scope)
@@ -185,8 +189,7 @@ class DurableCollaborationTests(TransactionTestCase):
             await first.send_to(bytes_data=frame)
             received = await second.receive_from(timeout=1)
             self.assertEqual(received, frame)
-            with self.assertRaises(asyncio.TimeoutError):
-                await isolated.receive_from(timeout=0.1)
+            self.assertTrue(await isolated.receive_nothing(timeout=0.1))
 
             viewer = WebsocketCommunicator(
                 self.authenticated_app(self.viewer), f"/ws/editor/{self.document.id}"

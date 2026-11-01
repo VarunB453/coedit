@@ -55,8 +55,8 @@ class EditorConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def receive(self, bytes_data=None, text_data=None):
-        if bytes_data is None or self.role == WorkspaceMembership.Role.VIEWER:
-            await self.close(code=4403 if self.role == WorkspaceMembership.Role.VIEWER else 4400)
+        if bytes_data is None:
+            await self.close(code=4400)
             return
         try:
             message_type, offset = _read_var_uint(bytes_data, 0)
