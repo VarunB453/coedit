@@ -151,18 +151,23 @@ class DurableCollaborationTests(TransactionTestCase):
 
     def test_duplicate_updates_are_deduplicated_and_recoverable_after_consumer_restart(self):
         update = b"durable-yjs-update"
+        concurrent_update = b"second-concurrent-update"
 
         async def persist_concurrently():
-            consumers = [self.consumer(self.owner) for _ in range(2)]
-            return await asyncio.gather(*(consumer._persist_update(update) for consumer in consumers))
+            consumers = [self.consumer(self.owner) for _ in range(3)]
+            return await asyncio.gather(
+                consumers[0]._persist_update(update),
+                consumers[1]._persist_update(update),
+                consumers[2]._persist_update(concurrent_update),
+            )
 
         results = async_to_sync(persist_concurrently)()
-        self.assertEqual(sum(results), 1)
-        self.assertEqual(DocumentUpdate.objects.filter(document=self.document).count(), 1)
+        self.assertEqual(sum(results), 2)
+        self.assertEqual(DocumentUpdate.objects.filter(document=self.document).count(), 2)
 
         connection.close()
         recovered = async_to_sync(self.consumer(self.owner)._load_updates)()
-        self.assertEqual([bytes(value) for value in recovered], [update])
+        self.assertEqual({bytes(value) for value in recovered}, {update, concurrent_update})
 
     def authenticated_app(self, user):
         inner = URLRouter(websocket_urlpatterns)
