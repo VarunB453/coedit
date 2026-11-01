@@ -11,7 +11,27 @@ def empty_document():
 
 class Workspace(models.Model):
 	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	name = models.CharField(max_length=100, default="Untitled workspace")
+	owner = models.ForeignKey(
+		"auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="owned_workspaces"
+	)
 	created_at = models.DateTimeField(auto_now_add=True)
+
+
+class WorkspaceMembership(models.Model):
+	class Role(models.TextChoices):
+		EDITOR = "editor", "Editor"
+		VIEWER = "viewer", "Viewer"
+
+	workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="memberships")
+	user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="workspace_memberships")
+	role = models.CharField(max_length=10, choices=Role.choices, default=Role.VIEWER)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		constraints = [
+			models.UniqueConstraint(fields=("workspace", "user"), name="uniq_workspace_member")
+		]
 
 
 class FileEntry(models.Model):
@@ -39,4 +59,20 @@ class FileEntry(models.Model):
 			models.UniqueConstraint(
 				Lower("name"), "workspace", "parent", condition=Q(parent__isnull=False), name="uniq_child_name_per_parent"
 			),
+		]
+
+
+class DocumentUpdate(models.Model):
+	document = models.ForeignKey(FileEntry, on_delete=models.CASCADE, related_name="yjs_updates")
+	author = models.ForeignKey(
+		"auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="document_updates"
+	)
+	update_hash = models.CharField(max_length=64)
+	update = models.BinaryField()
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ("id",)
+		constraints = [
+			models.UniqueConstraint(fields=("document", "update_hash"), name="uniq_document_yjs_update")
 		]

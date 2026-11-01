@@ -20,6 +20,12 @@ from editor import views as editor_views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/csrf/', editor_views.csrf_token),
+    path('api/auth/session/', editor_views.auth_session),
+    path('api/auth/register/', editor_views.register),
+    path('api/auth/logout/', editor_views.end_session),
+    path('api/workspaces/', editor_views.workspaces),
+    path('api/workspaces/<uuid:workspace_id>/members/', editor_views.workspace_members),
     path('api/workspaces/<uuid:workspace_id>/files/', editor_views.workspace_files),
     path('api/workspaces/<uuid:workspace_id>/files/<uuid:file_id>/', editor_views.workspace_file),
 ]

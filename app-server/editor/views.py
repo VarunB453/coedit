@@ -2,11 +2,15 @@ import json
 import re
 import uuid
 
+from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse
+from django.middleware.csrf import get_token
 from django.views.decorators.http import require_http_methods
 
-from .models import FileEntry, Workspace
+from .models import FileEntry, Workspace, WorkspaceMembership
 from .models import empty_document
 
 
@@ -16,6 +20,146 @@ MAX_CONTENT_BYTES = 1_000_000
 
 def _error(message, status):
 	return JsonResponse({"error": message}, status=status)
+
+
+def _authenticated(request):
+	if request.user.is_authenticated:
+		return True
+	return False
+
+
+def _workspace_role(workspace, user):
+	if workspace.owner_id == user.id:
+		return "owner"
+	membership = WorkspaceMembership.objects.filter(workspace=workspace, user=user).first()
+	if membership:
+		return membership.role
+	# Existing UUID workspaces predate ownership; their first authenticated visitor claims them.
+	with transaction.atomic():
+		locked = Workspace.objects.select_for_update().get(id=workspace.id)
+		if locked.owner_id is None and not locked.memberships.exists():
+			locked.owner = user
+			locked.save(update_fields=["owner"])
+			return "owner"
+		if locked.owner_id == user.id:
+			return "owner"
+	return WorkspaceMembership.objects.filter(workspace=workspace, user=user).values_list("role", flat=True).first()
+
+
+@require_http_methods(["GET"])
+def csrf_token(request):
+	return JsonResponse({"csrfToken": get_token(request)})
+
+
+@require_http_methods(["GET", "POST"])
+def auth_session(request):
+	if request.method == "GET":
+		if not _authenticated(request):
+			return _error("Authentication required.", 401)
+		return JsonResponse({"id": request.user.id, "username": request.user.get_username()})
+	body = _parse_body(request)
+	if body is None:
+		return _error("Request body must be a JSON object.", 400)
+	user = authenticate(request, username=body.get("username", ""), password=body.get("password", ""))
+	if user is None:
+		return _error("Username or password is incorrect.", 401)
+	login(request, user)
+	return JsonResponse({"id": user.id, "username": user.get_username()})
+
+
+@require_http_methods(["POST"])
+def register(request):
+	body = _parse_body(request)
+	if body is None:
+		return _error("Request body must be a JSON object.", 400)
+	username = body.get("username")
+	password = body.get("password")
+	if not isinstance(username, str) or not re.fullmatch(r"[A-Za-z0-9_.@+-]{1,150}", username.strip()):
+		return _error("Enter a valid username.", 400)
+	if not isinstance(password, str):
+		return _error("Password is required.", 400)
+	User = get_user_model()
+	user = User(username=username.strip())
+	try:
+		validate_password(password, user)
+		user.set_password(password)
+		user.save()
+	except ValidationError as error:
+		return JsonResponse({"error": " ".join(error.messages)}, status=400)
+	except IntegrityError:
+		return _error("That username is already in use.", 409)
+	login(request, user)
+	return JsonResponse({"id": user.id, "username": user.get_username()}, status=201)
+
+
+@require_http_methods(["POST"])
+def end_session(request):
+	logout(request)
+	return JsonResponse({})
+
+
+@require_http_methods(["GET", "POST"])
+def workspaces(request):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	if request.method == "GET":
+		workspaces = Workspace.objects.filter(owner=request.user) | Workspace.objects.filter(
+			memberships__user=request.user
+		)
+		return JsonResponse([
+			{"id": str(workspace.id), "name": workspace.name,
+			 "role": _workspace_role(workspace, request.user)}
+			for workspace in workspaces.distinct().order_by("created_at")
+		], safe=False)
+	body = _parse_body(request)
+	if body is None:
+		return _error("Request body must be a JSON object.", 400)
+	name = _validated_name(body.get("name", "Workspace"))
+	if name is None:
+		return _error("Workspace name is invalid.", 400)
+	workspace = Workspace.objects.create(name=name, owner=request.user)
+	return JsonResponse({"id": str(workspace.id), "name": workspace.name, "role": "owner"}, status=201)
+
+
+@require_http_methods(["GET", "POST"])
+def workspace_members(request, workspace_id):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	try:
+		workspace = Workspace.objects.get(id=workspace_id)
+	except Workspace.DoesNotExist:
+		return _error("Workspace was not found.", 404)
+	role = _workspace_role(workspace, request.user)
+	if role is None:
+		return _error("Workspace was not found.", 404)
+	if request.method == "GET":
+		if role != "owner":
+			return _error("Only the workspace owner can manage members.", 403)
+		members = [{"id": workspace.owner_id, "username": workspace.owner.get_username(), "role": "owner"}]
+		members.extend(
+			{"id": membership.user_id, "username": membership.user.get_username(), "role": membership.role}
+			for membership in workspace.memberships.select_related("user").order_by("user__username")
+		)
+		return JsonResponse(members, safe=False)
+	if role != "owner":
+		return _error("Only the workspace owner can manage members.", 403)
+	body = _parse_body(request)
+	if body is None:
+		return _error("Request body must be a JSON object.", 400)
+	username = body.get("username")
+	member_role = body.get("role")
+	if member_role not in WorkspaceMembership.Role.values:
+		return _error("Role must be 'editor' or 'viewer'.", 400)
+	try:
+		user = get_user_model().objects.get(username=username)
+	except get_user_model().DoesNotExist:
+		return _error("User was not found.", 404)
+	if user.id == request.user.id:
+		return _error("The owner already has full access.", 400)
+	membership, _ = WorkspaceMembership.objects.update_or_create(
+		workspace=workspace, user=user, defaults={"role": member_role}
+	)
+	return JsonResponse({"id": user.id, "username": user.get_username(), "role": membership.role}, status=201)
 
 
 def _parse_body(request):
@@ -87,11 +231,21 @@ def _valid_content(content):
 
 @require_http_methods(["GET", "POST"])
 def workspace_files(request, workspace_id):
-	workspace, _ = Workspace.objects.get_or_create(id=workspace_id)
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	try:
+		workspace = Workspace.objects.get(id=workspace_id)
+	except Workspace.DoesNotExist:
+		return _error("Workspace was not found.", 404)
+	role = _workspace_role(workspace, request.user)
+	if role is None:
+		return _error("Workspace was not found.", 404)
 
 	if request.method == "GET":
 		entries = FileEntry.objects.filter(workspace=workspace).select_related("parent")
-		return JsonResponse([_serialize(entry) for entry in entries], safe=False)
+		return JsonResponse({"role": role, "entries": [_serialize(entry) for entry in entries]})
+	if role == WorkspaceMembership.Role.VIEWER:
+		return _error("Viewer access is read-only.", 403)
 
 	body = _parse_body(request)
 	if body is None:
@@ -130,12 +284,19 @@ def workspace_files(request, workspace_id):
 
 @require_http_methods(["PATCH", "DELETE"])
 def workspace_file(request, workspace_id, file_id):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
 	try:
 		entry = FileEntry.objects.select_related("workspace", "parent").get(
 			id=file_id, workspace_id=workspace_id
 		)
 	except FileEntry.DoesNotExist:
 		return _error("File or folder was not found.", 404)
+	role = _workspace_role(entry.workspace, request.user)
+	if role is None:
+		return _error("File or folder was not found.", 404)
+	if role == WorkspaceMembership.Role.VIEWER:
+		return _error("Viewer access is read-only.", 403)
 
 	if request.method == "DELETE":
 		entry.delete()

@@ -1,38 +1,137 @@
+import hashlib
+
+from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.contrib.auth.models import AnonymousUser
+
+from editor.models import DocumentUpdate, FileEntry, Workspace, WorkspaceMembership
+
+
+def _read_var_uint(data, offset):
+    value = 0
+    shift = 0
+    while offset < len(data):
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, offset
+        shift += 7
+        if shift > 49:
+            raise ValueError("Invalid Yjs message")
+    raise ValueError("Incomplete Yjs message")
+
+
+def _write_var_uint(value):
+    encoded = bytearray()
+    while value > 0x7F:
+        encoded.append((value & 0x7F) | 0x80)
+        value >>= 7
+    encoded.append(value)
+    return bytes(encoded)
+
+
+def _update_message(update):
+    return _write_var_uint(0) + _write_var_uint(2) + _write_var_uint(len(update)) + update
 
 
 class EditorConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.room_name = self.scope['url_route']['kwargs']['room_name']
-        self.room_group_name = 'editor_%s' % self.room_name
+        user = self.scope.get("user", AnonymousUser())
+        document_id = self.scope["url_route"]["kwargs"]["room_name"]
+        access = await self._document_access(document_id, user)
+        if access is None:
+            await self.close(code=4403)
+            return
 
-        # Join room group
-        await self.channel_layer.group_add(
-            self.room_group_name,
-            self.channel_name
-        )
-
+        self.document_id, self.role = access
+        self.room_group_name = f"editor_{self.document_id}"
+        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
 
     async def disconnect(self, close_code):
-        # Leave room group
-        await self.channel_layer.group_discard(
-            self.room_group_name,
-            self.channel_name
-        )
+        if hasattr(self, "room_group_name"):
+            await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
-    # Receive message from WebSocket
-    async def receive(self, bytes_data):
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'editor_message',
-                'bytes_data': bytes_data
-            }
-        )
+    async def receive(self, bytes_data=None, text_data=None):
+        if bytes_data is None or self.role == WorkspaceMembership.Role.VIEWER:
+            await self.close(code=4403 if self.role == WorkspaceMembership.Role.VIEWER else 4400)
+            return
+        try:
+            message_type, offset = _read_var_uint(bytes_data, 0)
+            if message_type == 0:
+                sync_type, offset = _read_var_uint(bytes_data, offset)
+                if sync_type in (1, 2):
+                    update_length, update_offset = _read_var_uint(bytes_data, offset)
+                    update = bytes_data[update_offset:update_offset + update_length]
+                    if len(update) != update_length:
+                        raise ValueError("Incomplete Yjs update")
+                    created = await self._persist_update(update)
+                    if created:
+                        await self.channel_layer.group_send(
+                            self.room_group_name,
+                            {"type": "editor_message", "bytes_data": _update_message(update)},
+                        )
+                    return
+                if sync_type == 0:
+                    updates = await self._load_updates()
+                    for update in updates:
+                        await self.send(bytes_data=_update_message(update))
+                    return
+                raise ValueError("Unsupported Yjs sync message")
+            if message_type in (1, 3):
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "editor_message", "bytes_data": bytes_data},
+                )
+                return
+            if message_type == 2:
+                await self.send(bytes_data=_write_var_uint(3))
+                return
+            raise ValueError("Unsupported Yjs message")
+        except (IndexError, ValueError):
+            await self.close(code=4400)
 
     async def editor_message(self, event):
-        bytes_data = event['bytes_data']
+        await self.send(bytes_data=event["bytes_data"])
 
-        # Send message to WebSocket
-        await self.send(bytes_data=bytes_data)
+    @database_sync_to_async
+    def _document_access(self, document_id, user):
+        if not user.is_authenticated:
+            return None
+        try:
+            document = FileEntry.objects.select_related("workspace").get(
+                id=document_id, kind=FileEntry.Kind.FILE
+            )
+        except (ValueError, FileEntry.DoesNotExist):
+            return None
+        workspace = document.workspace
+        if workspace.owner_id == user.id:
+            role = "owner"
+        else:
+            role = WorkspaceMembership.objects.filter(
+                workspace=workspace, user=user
+            ).values_list("role", flat=True).first()
+        if role is None:
+            return None
+        if role == WorkspaceMembership.Role.VIEWER:
+            return str(document.id), role
+        return str(document.id), role
+
+    @database_sync_to_async
+    def _persist_update(self, update):
+        digest = hashlib.sha256(update).hexdigest()
+        _, created = DocumentUpdate.objects.get_or_create(
+            document_id=self.document_id,
+            update_hash=digest,
+            defaults={"update": update, "author_id": self.scope["user"].id},
+        )
+        return created
+
+    @database_sync_to_async
+    def _load_updates(self):
+        return list(
+            DocumentUpdate.objects.filter(document_id=self.document_id)
+            .order_by("id")
+            .values_list("update", flat=True)
+        )
