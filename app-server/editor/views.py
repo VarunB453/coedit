@@ -1,6 +1,8 @@
 import json
 import re
 import uuid
+from datetime import timedelta
+from math import ceil
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
@@ -8,6 +10,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from .models import FileEntry, Workspace, WorkspaceMembership
@@ -151,6 +154,42 @@ def workspace_members(request, workspace_id):
 		workspace=workspace, user=user, defaults={"role": member_role}
 	)
 	return JsonResponse({"id": user.id, "username": user.get_username(), "role": membership.role}, status=201)
+
+
+@require_http_methods(["GET", "POST"])
+def document_initialization(request, workspace_id, file_id):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	try:
+		entry = FileEntry.objects.select_related("workspace").get(
+			id=file_id, workspace_id=workspace_id, kind=FileEntry.Kind.FILE
+		)
+	except FileEntry.DoesNotExist:
+		return _error("Document was not found.", 404)
+	role = _workspace_role(entry.workspace, request.user)
+	if role is None:
+		return _error("Document was not found.", 404)
+	can_edit = role in ("owner", WorkspaceMembership.Role.EDITOR)
+	if request.method == "POST" and not can_edit:
+		return _error("Viewer access is read-only.", 403)
+
+	with transaction.atomic():
+		entry = FileEntry.objects.select_for_update().get(id=entry.id)
+		if entry.yjs_updates.exists():
+			return JsonResponse({"ready": True, "initialize": False})
+		if entry.content == empty_document():
+			return JsonResponse({"ready": True, "initialize": False})
+		now = timezone.now()
+		if entry.yjs_initializing_until and entry.yjs_initializing_until > now:
+			return JsonResponse({
+				"ready": False,
+				"retry_after": max(1, ceil((entry.yjs_initializing_until - now).total_seconds())),
+			})
+		if not can_edit:
+			return JsonResponse({"ready": False, "retry_after": 2})
+		entry.yjs_initializing_until = now + timedelta(seconds=30)
+		entry.save(update_fields=["yjs_initializing_until"])
+		return JsonResponse({"ready": True, "initialize": True})
 
 
 def _parse_body(request):

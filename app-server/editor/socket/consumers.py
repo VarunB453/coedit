@@ -78,7 +78,7 @@ class EditorConsumer(AsyncWebsocketConsumer):
                     return
                 if sync_type == 0:
                     updates = await self._load_updates()
-                    for update in updates:
+                    for update in updates or [b"\x00\x00"]:
                         await self.send(bytes_data=_update_message(update))
                     return
                 raise ValueError("Unsupported Yjs sync message")
@@ -128,6 +128,10 @@ class EditorConsumer(AsyncWebsocketConsumer):
                     update_hash=digest,
                     defaults={"update": update, "author_id": self.scope["user"].id},
                 )
+                if created:
+                    FileEntry.objects.filter(
+                        id=self.document_id, yjs_initializing_until__isnull=False
+                    ).update(yjs_initializing_until=None)
                 return created
         except IntegrityError:
             return False

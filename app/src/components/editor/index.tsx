@@ -1,6 +1,6 @@
 import { randomInt } from "remirror";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import "remirror/styles/all.css";
 
@@ -37,10 +37,13 @@ import {
 export interface Props {
   username: string;
   fileId: string;
+  workspaceId: string;
   initialContent: Record<string, unknown> | unknown[];
   onContentChange: (content: any) => void;
   editable?: boolean;
 }
+
+type EditorSurfaceProps = Props & { provider: WebsocketProvider; seedContent: boolean };
 
 const colors = [
   "#CC444B",
@@ -54,9 +57,14 @@ const colors = [
   "#FFC857",
 ];
 
-const Editor: React.FC<Props> = (props) => {
-  const { username, fileId, initialContent, onContentChange, editable = true } = props;
-
+const EditorSurface: React.FC<EditorSurfaceProps> = ({
+  username,
+  initialContent,
+  onContentChange,
+  editable = true,
+  provider,
+  seedContent,
+}) => {
   // remirror error handler
   const onError: InvalidContentHandler = useCallback(
     ({ json, invalidContent, transformers }: any) => {
@@ -111,7 +119,7 @@ const Editor: React.FC<Props> = (props) => {
         getProvider: () => provider,
       }),
     ],
-    content: initialContent as any,
+    content: seedContent ? initialContent as any : undefined,
     selection: "start",
     onError,
   });
@@ -139,6 +147,94 @@ const Editor: React.FC<Props> = (props) => {
       </Remirror>
     </div>
   );
+};
+
+const apiBase =
+  import.meta.env.VITE_API_URL ??
+  (window.location.hostname === "localhost"
+    ? "http://localhost:8000"
+    : window.location.origin);
+
+const Editor: React.FC<Props> = (props) => {
+  const { fileId, workspaceId, editable = true } = props;
+  const ydoc = useMemo(() => new Y.Doc(), [fileId]);
+  const provider = useMemo(() => {
+    const websocketBase = apiBase.replace(/^http/, "ws").replace(/\/$/, "");
+    return new WebsocketProvider(`${websocketBase}/ws/editor/${fileId}`, fileId, ydoc);
+  }, [fileId, ydoc]);
+  const [seedContent, setSeedContent] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    provider.awareness.setLocalStateField("user", {
+      name: props.username,
+      color: colors[randomInt(0, colors.length - 1)],
+    });
+    return () => {
+      provider.destroy();
+      ydoc.destroy();
+    };
+  }, [provider, props.username, ydoc]);
+
+  useEffect(() => {
+    let active = true;
+    let complete = false;
+    let requesting = false;
+    let retryTimer = 0;
+
+    const requestInitialization = async () => {
+      if (!active || complete || requesting) return;
+      requesting = true;
+      try {
+        const method = editable ? "POST" : "GET";
+        const headers = new Headers();
+        if (editable) {
+          const csrfResponse = await fetch(`${apiBase}/api/csrf/`, { credentials: "include" });
+          if (!csrfResponse.ok) throw new Error("Could not establish a secure session.");
+          const { csrfToken } = await csrfResponse.json();
+          headers.set("X-CSRFToken", csrfToken);
+        }
+        const response = await fetch(
+          `${apiBase}/api/workspaces/${workspaceId}/files/${fileId}/initialize/`,
+          { method, headers, credentials: "include" }
+        );
+        if (!response.ok) throw new Error("Could not initialize document sync.");
+        const result = await response.json();
+        if (!active) return;
+        if (result.ready) {
+          complete = true;
+          setSeedContent(Boolean(result.initialize));
+        } else {
+          retryTimer = window.setTimeout(
+            requestInitialization,
+            Math.min(Math.max(1, result.retry_after ?? 2), 2) * 1000
+          );
+        }
+      } catch {
+        if (active) {
+          retryTimer = window.setTimeout(requestInitialization, 2000);
+        }
+      } finally {
+        requesting = false;
+      }
+    };
+
+    const onSync = (synced: boolean) => {
+      if (synced) void requestInitialization();
+    };
+    provider.on("sync", onSync);
+    if (provider.synced) void requestInitialization();
+    return () => {
+      active = false;
+      window.clearTimeout(retryTimer);
+      provider.off("sync", onSync);
+    };
+  }, [editable, fileId, provider, workspaceId]);
+
+  if (seedContent === null) {
+    return <p className="p-4 text-sm text-slate-500">Waiting for document sync…</p>;
+  }
+
+  return <EditorSurface {...props} provider={provider} seedContent={seedContent} />;
 };
 
 export default Editor;

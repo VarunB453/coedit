@@ -543,6 +543,7 @@ const App = () => {
                   key={activeEntry.id}
                   username={user.username}
                   fileId={activeEntry.id}
+                  workspaceId={workspaceId!}
                   initialContent={activeEntry.content}
                   editable={canEdit}
                   onContentChange={(content) => {

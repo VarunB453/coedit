@@ -52,6 +52,7 @@ class FileEntry(models.Model):
 	name = models.CharField(max_length=100)
 	kind = models.CharField(max_length=10, choices=Kind.choices)
 	content = models.JSONField(default=empty_document, blank=True)
+	yjs_initializing_until = models.DateTimeField(null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
