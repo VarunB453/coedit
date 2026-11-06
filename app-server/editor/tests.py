@@ -10,7 +10,10 @@ from django.db import connection
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from editor.models import DocumentUpdate, FileEntry, Workspace, WorkspaceMembership
+from editor.models import (
+    DocumentUpdate, FileEntry, Notification, Workspace, WorkspaceMembership,
+    WorkspaceShareLink,
+)
 from editor.ai import build_messages
 from editor.socket.consumers import MAX_WEBSOCKET_MESSAGE_BYTES, EditorConsumer
 from editor.socket.routing import websocket_urlpatterns
@@ -218,6 +221,127 @@ class WorkspaceFileApiTests(TestCase):
         document.save(update_fields=["yjs_initializing_until"])
         retry = self.client.post(url)
         self.assertEqual(retry.json(), {"ready": True, "initialize": True})
+
+
+class SaaSFeatureApiTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_user(username="owner", password="C0llab!Long-passphrase-9")
+        self.member = User.objects.create_user(username="member", password="C0llab!Long-passphrase-9")
+        self.stranger = User.objects.create_user(username="stranger", password="C0llab!Long-passphrase-9")
+        self.workspace = Workspace.objects.create(name="Project", owner=self.owner)
+        self.document = FileEntry.objects.create(
+            workspace=self.workspace,
+            name="Plan",
+            kind=FileEntry.Kind.FILE,
+            content={"type": "doc", "content": [{"type": "text", "text": "Launch strategy"}]},
+        )
+        self.client.force_login(self.owner)
+
+    def test_profile_updates_and_password_change_keep_session_authenticated(self):
+        response = self.client.patch(
+            "/api/auth/profile/",
+            data={"display_name": "Project Lead", "email": "lead@example.com"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["display_name"], "Project Lead")
+        self.assertEqual(response.json()["email"], "lead@example.com")
+
+        password_response = self.client.patch(
+            "/api/auth/profile/",
+            data={
+                "current_password": "C0llab!Long-passphrase-9",
+                "new_password": "An0ther!Long-passphrase-123",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(password_response.status_code, 200)
+        self.assertEqual(self.client.get("/api/auth/session/").status_code, 200)
+        self.assertTrue(
+            get_user_model().objects.get(id=self.owner.id).check_password("An0ther!Long-passphrase-123")
+        )
+
+    def test_share_link_joins_with_limited_role_and_can_be_revoked(self):
+        url = f"/api/workspaces/{self.workspace.id}/share-links/"
+        created = self.client.post(
+            url,
+            data={"role": "viewer", "expires_in_days": 7},
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 201)
+        token = created.json()["token"]
+        self.assertNotEqual(
+            WorkspaceShareLink.objects.get(id=created.json()["id"]).token_hash, token
+        )
+
+        self.client.force_login(self.member)
+        joined = self.client.post(f"/api/share/{token}/accept/")
+        self.assertEqual(joined.status_code, 200)
+        self.assertEqual(joined.json()["role"], "viewer")
+        self.assertEqual(
+            WorkspaceMembership.objects.get(workspace=self.workspace, user=self.member).role,
+            WorkspaceMembership.Role.VIEWER,
+        )
+        denied = self.client.post(
+            f"/api/workspaces/{self.workspace.id}/files/",
+            data={"name": "other", "kind": "file"},
+            content_type="application/json",
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        self.client.force_login(self.owner)
+        revoked = self.client.delete(f"{url}{created.json()['id']}/")
+        self.assertEqual(revoked.status_code, 200)
+        self.client.force_login(self.stranger)
+        rejected = self.client.post(f"/api/share/{token}/accept/")
+        self.assertEqual(rejected.status_code, 404)
+
+    def test_share_links_and_workspace_settings_are_owner_only(self):
+        self.client.force_login(self.member)
+        self.assertEqual(
+            self.client.post(
+                f"/api/workspaces/{self.workspace.id}/share-links/",
+                data={"role": "editor"},
+                content_type="application/json",
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.patch(
+                f"/api/workspaces/{self.workspace.id}/",
+                data={"name": "Changed"},
+                content_type="application/json",
+            ).status_code,
+            403,
+        )
+
+    def test_comments_history_and_search_require_membership(self):
+        comments_url = f"/api/workspaces/{self.workspace.id}/files/{self.document.id}/comments/"
+        history_url = f"/api/workspaces/{self.workspace.id}/files/{self.document.id}/history/"
+        created = self.client.post(
+            comments_url,
+            data={"body": "Looks good"},
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(Notification.objects.filter(user=self.owner, kind="comment").count(), 0)
+        version = self.client.post(
+            history_url,
+            data={"content": {"type": "doc", "content": [{"type": "text", "text": "First draft"}]}},
+            content_type="application/json",
+        )
+        self.assertEqual(version.status_code, 201)
+        self.assertEqual(
+            self.client.get(f"{history_url}{version.json()['id']}/").json()["content"]["content"][0]["text"],
+            "First draft",
+        )
+        self.assertEqual(self.client.get("/api/search/?q=Launch").status_code, 200)
+
+        self.client.force_login(self.stranger)
+        self.assertEqual(self.client.get(comments_url).status_code, 404)
+        self.assertEqual(self.client.get(history_url).status_code, 404)
+        self.assertEqual(self.client.get("/api/search/?q=Launch").json()["results"], [])
 
 
 class AIApiTests(TestCase):
