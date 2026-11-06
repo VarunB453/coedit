@@ -1,4 +1,5 @@
 import uuid
+import hashlib
 
 from django.conf import settings
 from django.db import models
@@ -21,6 +22,7 @@ class Workspace(models.Model):
 		related_name="owned_workspaces",
 	)
 	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
 
 
 class WorkspaceMembership(models.Model):
@@ -86,3 +88,67 @@ class DocumentUpdate(models.Model):
 		constraints = [
 			models.UniqueConstraint(fields=("document", "update_hash"), name="uniq_document_yjs_update")
 		]
+
+
+class UserProfile(models.Model):
+	user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
+	display_name = models.CharField(max_length=100, blank=True)
+
+	def __str__(self):
+		return self.display_name or self.user.get_username()
+
+
+class WorkspaceShareLink(models.Model):
+	workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="share_links")
+	token_hash = models.CharField(max_length=64, unique=True)
+	role = models.CharField(max_length=10, choices=WorkspaceMembership.Role.choices)
+	created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="created_share_links")
+	created_at = models.DateTimeField(auto_now_add=True)
+	expires_at = models.DateTimeField(null=True, blank=True)
+	revoked_at = models.DateTimeField(null=True, blank=True)
+
+	@staticmethod
+	def digest(token):
+		return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class DocumentComment(models.Model):
+	document = models.ForeignKey(FileEntry, on_delete=models.CASCADE, related_name="comments")
+	author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="document_comments")
+	body = models.TextField(max_length=4000)
+	created_at = models.DateTimeField(auto_now_add=True)
+	resolved_at = models.DateTimeField(null=True, blank=True)
+	resolved_by = models.ForeignKey(
+		settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+		related_name="resolved_document_comments",
+	)
+
+	class Meta:
+		ordering = ("created_at",)
+
+
+class DocumentVersion(models.Model):
+	document = models.ForeignKey(FileEntry, on_delete=models.CASCADE, related_name="versions")
+	author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="document_versions")
+	content = models.JSONField()
+	content_hash = models.CharField(max_length=64)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ("-created_at", "-id")
+		constraints = [
+			models.UniqueConstraint(fields=("document", "content_hash"), name="uniq_document_version_hash")
+		]
+
+
+class Notification(models.Model):
+	user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
+	workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="notifications")
+	kind = models.CharField(max_length=30)
+	message = models.CharField(max_length=255)
+	document = models.ForeignKey(FileEntry, on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
+	created_at = models.DateTimeField(auto_now_add=True)
+	read_at = models.DateTimeField(null=True, blank=True)
+
+	class Meta:
+		ordering = ("-created_at", "-id")
