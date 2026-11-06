@@ -288,7 +288,10 @@ def workspace_share_links(request, workspace_id):
 	if workspace.owner_id != request.user.id:
 		return _error("Only the workspace owner can manage sharing links.", 403)
 	if request.method == "GET":
-		links = WorkspaceShareLink.objects.filter(workspace=workspace, revoked_at__isnull=True)
+		links = WorkspaceShareLink.objects.filter(
+			Q(workspace=workspace, revoked_at__isnull=True)
+			& (Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
+		)
 		return JsonResponse([
 			{"id": link.id, "role": link.role, "created_at": link.created_at.isoformat(),
 			 "expires_at": link.expires_at.isoformat() if link.expires_at else None}

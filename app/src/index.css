@@ -1254,6 +1254,17 @@ p, h1, h2, h3, h4 {
   gap: 0.5rem;
 }
 
+.share-links-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.9rem 0 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.share-links-card h3 {
+  font-size: 0.82rem;
+}
+
 .member-row {
   display: flex;
   justify-content: space-between;

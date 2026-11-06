@@ -17,6 +17,7 @@ type VersionInfo = { id: number; author: string; created_at: string };
 type SearchResult = { id: string; name: string; workspace_id: string; workspace_name: string; updated_at: string };
 type NotificationInfo = { id: number; kind: string; message: string; workspace_id: string; document_id: string | null; created_at: string; read: boolean };
 type MemberInfo = { id: number; username: string; display_name?: string; role: "owner" | "editor" | "viewer" };
+type ShareLinkInfo = { id: number; role: "editor" | "viewer"; created_at: string; expires_at: string | null };
 
 type DialogMode = "create-file" | "create-folder" | "rename";
 
@@ -88,6 +89,7 @@ const App = () => {
   const [inviteError, setInviteError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchError, setSearchError] = useState("");
   const [comments, setComments] = useState<CommentInfo[]>([]);
   const [commentInput, setCommentInput] = useState("");
   const [commentError, setCommentError] = useState("");
@@ -96,6 +98,7 @@ const App = () => {
   const [notifications, setNotifications] = useState<NotificationInfo[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [members, setMembers] = useState<MemberInfo[]>([]);
+  const [shareLinks, setShareLinks] = useState<ShareLinkInfo[]>([]);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileName, setProfileName] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
@@ -191,6 +194,7 @@ const App = () => {
   useEffect(() => {
     if (!user || searchInput.trim().length < 2) {
       setSearchResults([]);
+      setSearchError("");
       return;
     }
     let active = true;
@@ -200,9 +204,15 @@ const App = () => {
         const response = await apiFetch(`${API_BASE}/api/search/?${params}`);
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? "Search failed.");
-        if (active) setSearchResults(result.results as SearchResult[]);
-      } catch {
-        if (active) setSearchResults([]);
+        if (active) {
+          setSearchError("");
+          setSearchResults(result.results as SearchResult[]);
+        }
+      } catch (error) {
+        if (active) {
+          setSearchResults([]);
+          setSearchError(error instanceof Error ? error.message : "Search failed.");
+        }
       }
     }, 250);
     return () => {
@@ -210,6 +220,27 @@ const App = () => {
       window.clearTimeout(timer);
     };
   }, [searchInput, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await apiFetch(`${API_BASE}/api/auth/notifications/`);
+        if (!response.ok) throw new Error("Could not load notifications.");
+        const result = (await response.json()) as NotificationInfo[];
+        if (active) setNotifications(result);
+      } catch {
+        if (active) setLoadError("Could not refresh notifications.");
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [user]);
 
   useEffect(() => {
     if (!documentUrl) {
@@ -251,6 +282,22 @@ const App = () => {
       })
       .then((loaded) => { if (active) setMembers(loaded); })
       .catch(() => { if (active) setInviteError("Could not load workspace members."); });
+    return () => { active = false; };
+  }, [workspaceId, workspaceRole]);
+
+  useEffect(() => {
+    if (!workspaceId || workspaceRole !== "owner") {
+      setShareLinks([]);
+      return;
+    }
+    let active = true;
+    apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/share-links/`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not load sharing links.");
+        return (await response.json()) as ShareLinkInfo[];
+      })
+      .then((loaded) => { if (active) setShareLinks(loaded); })
+      .catch(() => { if (active) setShareError("Could not load sharing links."); });
     return () => { active = false; };
   }, [workspaceId, workspaceRole]);
 
@@ -554,6 +601,8 @@ const App = () => {
       setShareLink(url.toString());
       await navigator.clipboard.writeText(url.toString());
       setLinkCopied(true);
+      const linksResponse = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/share-links/`);
+      if (linksResponse.ok) setShareLinks((await linksResponse.json()) as ShareLinkInfo[]);
     } catch (error) {
       setShareError(error instanceof Error ? error.message : "Could not create sharing link.");
     }
@@ -904,7 +953,7 @@ const App = () => {
                     <strong>{result.name}</strong>
                     <small>{result.workspace_name}</small>
                   </button>
-                )) : <p className="empty-state-inline">No matching documents.</p>}
+                )) : <p className="empty-state-inline">{searchError || "No matching documents."}</p>}
               </div>
             )}
           </div>
@@ -988,6 +1037,31 @@ const App = () => {
                 ))}
               </div>
             </form>
+          )}
+          {workspaceRole === "owner" && shareLinks.length > 0 && (
+            <section className="share-links-card">
+              <h3>Active invite links</h3>
+              {shareLinks.map((link) => (
+                <div key={link.id} className="member-row">
+                  <span>{link.role}<small>{link.expires_at ? `Expires ${new Date(link.expires_at).toLocaleDateString()}` : "No expiry"}</small></span>
+                  <button
+                    type="button"
+                    className="inline-link danger-text"
+                    onClick={async () => {
+                      if (!workspaceId) return;
+                      const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/share-links/${link.id}/`, { method: "DELETE" });
+                      if (!response.ok) {
+                        setShareError("Could not revoke this invite link.");
+                        return;
+                      }
+                      setShareLinks((current) => current.filter((item) => item.id !== link.id));
+                    }}
+                  >
+                    Revoke
+                  </button>
+                </div>
+              ))}
+            </section>
           )}
         </aside>
 
