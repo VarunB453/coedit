@@ -1019,3 +1019,51 @@ p, h1, h2, h3, h4 {
     justify-content: flex-end;
   }
 }
+
+.collaborator-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.collaborator-avatar,
+.collaborator-overflow {
+  display: inline-grid;
+  width: 1.65rem;
+  height: 1.65rem;
+  place-items: center;
+  border: 2px solid white;
+  border-radius: 999px;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.collaborator-overflow {
+  background: #64748b;
+}
+
+.collaboration-cursor {
+  position: relative;
+  display: inline-block;
+  height: 1.1em;
+  margin: 0 -1px;
+  border-left: 2px solid;
+  vertical-align: text-bottom;
+  word-break: normal;
+}
+
+.collaboration-cursor::after {
+  position: absolute;
+  top: -1.35em;
+  left: -2px;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px 4px 4px 0;
+  background: var(--cursor-color);
+  color: white;
+  content: attr(data-user);
+  font-size: 0.65rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}

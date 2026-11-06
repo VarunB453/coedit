@@ -10,7 +10,7 @@ from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from editor.models import DocumentUpdate, FileEntry, Workspace, WorkspaceMembership
-from editor.socket.consumers import EditorConsumer
+from editor.socket.consumers import MAX_WEBSOCKET_MESSAGE_BYTES, EditorConsumer
 from editor.socket.routing import websocket_urlpatterns
 
 
@@ -317,3 +317,50 @@ class DurableCollaborationTests(TransactionTestCase):
             self.assertFalse(connected)
 
         async_to_sync(exercise_denials)()
+
+    def test_existing_editor_connections_respect_role_changes(self):
+        editor = get_user_model().objects.create_user(username="editor", ******)
+        membership = WorkspaceMembership.objects.create(
+            workspace=self.workspace, user=editor, role=WorkspaceMembership.Role.EDITOR
+        )
+
+        async def exercise_role_change():
+            communicator = WebsocketCommunicator(
+                self.authenticated_app(editor), f"/ws/editor/{self.document.id}"
+            )
+            connected, _ = await communicator.connect()
+            self.assertTrue(connected)
+
+            membership.role = WorkspaceMembership.Role.VIEWER
+            membership.save(update_fields=["role"])
+            await communicator.send_to(bytes_data=b"\x00\x02\x01v")
+            self.assertTrue(await communicator.receive_nothing(timeout=0.1))
+            self.assertEqual(
+                DocumentUpdate.objects.filter(document=self.document).count(), 0
+            )
+
+            membership.delete()
+            await communicator.send_to(bytes_data=b"\x00\x02\x01r")
+            close_message = await communicator.receive_output(timeout=1)
+            self.assertEqual(close_message["type"], "websocket.close")
+            self.assertEqual(close_message["code"], 4403)
+            await communicator.disconnect()
+
+        async_to_sync(exercise_role_change)()
+
+    def test_oversized_websocket_messages_are_closed(self):
+        async def exercise_limit():
+            communicator = WebsocketCommunicator(
+                self.authenticated_app(self.owner), f"/ws/editor/{self.document.id}"
+            )
+            connected, _ = await communicator.connect()
+            self.assertTrue(connected)
+            await communicator.send_to(
+                bytes_data=b"x" * (MAX_WEBSOCKET_MESSAGE_BYTES + 1)
+            )
+            close_message = await communicator.receive_output(timeout=1)
+            self.assertEqual(close_message["type"], "websocket.close")
+            self.assertEqual(close_message["code"], 4400)
+            await communicator.disconnect()
+
+        async_to_sync(exercise_limit)()

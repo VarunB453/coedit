@@ -103,8 +103,10 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
         cursorBuilder: (user) => {
           const cursor = document.createElement("span");
           cursor.className = "collaboration-cursor";
-          cursor.style.borderColor = typeof user.color === "string" ? user.color : "#1b5e52";
-          cursor.textContent = typeof user.name === "string" ? user.name : "Collaborator";
+          const color = typeof user.color === "string" ? user.color : "#1b5e52";
+          cursor.style.borderColor = color;
+          cursor.style.setProperty("--cursor-color", color);
+          cursor.dataset.user = typeof user.name === "string" ? user.name : "Collaborator";
           return cursor;
         },
       }),
@@ -213,45 +215,6 @@ const Editor: React.FC<Props> = (props) => {
       }
       setPresence(Array.from(users.values()));
     };
-    provider.awareness.on("change", updatePresence);
-    updatePresence();
-    return () => {
-      provider.awareness.off("change", updatePresence);
-      provider.destroy();
-      void persistence.destroy().finally(() => ydoc.destroy());
-    };
-  }, [persistence, provider, props.username, userId, ydoc]);
-
-  useEffect(() => {
-    let active = true;
-    const connect = () => {
-      if (active) provider.connect();
-    };
-    void persistence.whenSynced.then(connect).catch((error: unknown) => {
-      console.error("Could not restore local document data.", error);
-      if (active) onSyncStatusChange?.("error");
-    });
-    return () => {
-      active = false;
-    };
-  }, [onSyncStatusChange, persistence, provider]);
-
-  useEffect(() => {
-    const updatePresence = () => {
-      const users = new Map<number, PresenceUser>();
-      for (const state of provider.awareness.getStates().values()) {
-        const user = state.user;
-        if (
-          user &&
-          typeof user.id === "number" &&
-          typeof user.name === "string" &&
-          typeof user.color === "string"
-        ) {
-          users.set(user.id, { id: user.id, name: user.name, color: user.color });
-        }
-      }
-      setPresence(Array.from(users.values()));
-    };
     const onStatus = ({ status }: { status: string }) => {
       onSyncStatusChange?.(status === "connected" ? "connecting" : "offline");
     };
@@ -261,12 +224,36 @@ const Editor: React.FC<Props> = (props) => {
     provider.awareness.on("change", updatePresence);
     provider.on("status", onStatus);
     provider.on("sync", onSync);
+    updatePresence();
     return () => {
       provider.awareness.off("change", updatePresence);
       provider.off("status", onStatus);
       provider.off("sync", onSync);
+      provider.destroy();
+      void persistence.destroy().finally(() => ydoc.destroy());
     };
-  }, [onSyncStatusChange, provider]);
+  }, [onSyncStatusChange, persistence, provider, props.username, userId, ydoc]);
+
+  useEffect(() => {
+    let active = true;
+    const connect = () => {
+      if (!active) return;
+      if (!navigator.onLine) {
+        onSyncStatusChange?.("offline");
+        setSeedContent((current) => current ?? (ydoc.share.size === 0));
+      } else {
+        onSyncStatusChange?.("connecting");
+      }
+      provider.connect();
+    };
+    void persistence.whenSynced.then(connect).catch((error: unknown) => {
+      console.error("Could not restore local document data.", error);
+      if (active) onSyncStatusChange?.("error");
+    });
+    return () => {
+      active = false;
+    };
+  }, [onSyncStatusChange, persistence, provider, ydoc]);
 
   useEffect(() => {
     let active = true;
@@ -328,6 +315,9 @@ const Editor: React.FC<Props> = (props) => {
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     if (provider.synced) void requestInitialization();
+    void persistence.whenSynced.then(() => requestInitialization()).catch((error: unknown) => {
+      console.error("Could not initialize document sync.", error);
+    });
     return () => {
       active = false;
       window.clearTimeout(retryTimer);
@@ -335,7 +325,7 @@ const Editor: React.FC<Props> = (props) => {
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
     };
-  }, [editable, fileId, onSyncStatusChange, provider, workspaceId, ydoc]);
+  }, [editable, fileId, onSyncStatusChange, persistence, provider, workspaceId, ydoc]);
 
   if (seedContent === null) {
     return <p className="editor-loading">Waiting for document sync…</p>;
