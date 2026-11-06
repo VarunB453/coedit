@@ -380,11 +380,17 @@ def document_comments(request, workspace_id, file_id):
 	if not isinstance(text, str) or not text.strip() or len(text.strip()) > MAX_COMMENT_LENGTH:
 		return _error("Comment must be between 1 and 4,000 characters.", 400)
 	comment = DocumentComment.objects.create(document=entry, author=request.user, body=text.strip())
-	if entry.workspace.owner_id and entry.workspace.owner_id != request.user.id:
-		Notification.objects.create(
-			user_id=entry.workspace.owner_id, workspace=entry.workspace, document=entry,
-			kind="comment", message=f"{request.user.get_username()} commented on {entry.name}.",
+	recipients = set(entry.workspace.memberships.values_list("user_id", flat=True))
+	if entry.workspace.owner_id:
+		recipients.add(entry.workspace.owner_id)
+	recipients.discard(request.user.id)
+	Notification.objects.bulk_create([
+		Notification(
+			user_id=user_id, workspace=entry.workspace, document=entry, kind="comment",
+			message=f"{request.user.get_username()} commented on {entry.name}.",
 		)
+		for user_id in recipients
+	])
 	return JsonResponse({
 		"id": comment.id, "body": comment.body, "author": request.user.get_username(),
 		"created_at": comment.created_at.isoformat(), "resolved": False,

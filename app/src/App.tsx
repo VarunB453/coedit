@@ -191,7 +191,6 @@ const App = () => {
     const timer = window.setTimeout(async () => {
       try {
         const params = new URLSearchParams({ q: searchInput.trim() });
-        if (workspaceId) params.set("workspace", workspaceId);
         const response = await apiFetch(`${API_BASE}/api/search/?${params}`);
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? "Search failed.");
@@ -204,7 +203,7 @@ const App = () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [searchInput, user, workspaceId]);
+  }, [searchInput, user]);
 
   useEffect(() => {
     if (!documentUrl) {
@@ -285,7 +284,7 @@ const App = () => {
   );
 
   const saveHistorySnapshot = useCallback((content: unknown) => {
-    if (!documentUrl) return;
+    if (!documentUrl || !canEdit) return;
     const now = Date.now();
     if (now - (lastSnapshotByDocument.current[documentUrl] ?? 0) < 30000) return;
     lastSnapshotByDocument.current[documentUrl] = now;
@@ -303,7 +302,7 @@ const App = () => {
     }).catch((error: unknown) => {
       setCommentError(error instanceof Error ? error.message : "Could not save document history.");
     });
-  }, [documentUrl]);
+  }, [canEdit, documentUrl]);
 
   const childrenByParent = useMemo(() => {
     const grouped = new Map<string | null, FileEntry[]>();
@@ -495,6 +494,22 @@ const App = () => {
       if (membersResponse.ok) setMembers((await membersResponse.json()) as MemberInfo[]);
     } catch (error) {
       setInviteError(error instanceof Error ? error.message : "Could not add member.");
+    }
+  };
+
+  const updateMemberRole = async (member: MemberInfo, role: "editor" | "viewer") => {
+    if (!workspaceId || workspaceRole !== "owner") return;
+    try {
+      const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/members/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: member.username, role }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not update member role.");
+      setMembers((current) => current.map((item) => item.id === member.id ? { ...item, role } : item));
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "Could not update member role.");
     }
   };
 
@@ -805,7 +820,8 @@ const App = () => {
       </header>
       {(shareError || shareLink) && (
         <div className="share-feedback" role={shareError ? "alert" : "status"}>
-          {shareError || <>Invite link (expires in 7 days): <a href={shareLink}>{shareLink}</a></>}
+          {shareError && <span>{shareError}</span>}
+          {shareLink && <span>Invite link (expires in 7 days): <a href={shareLink}>{shareLink}</a></span>}
           <button type="button" className="inline-link" onClick={() => { setShareLink(""); setShareError(""); setLinkCopied(false); }}>Dismiss</button>
         </div>
       )}
@@ -939,7 +955,16 @@ const App = () => {
               <div className="member-list">
                 {members.filter((member) => member.role !== "owner").map((member) => (
                   <div key={member.id} className="member-row">
-                    <span>{member.username}<small>{member.role}</small></span>
+                    <span>{member.username}</span>
+                    <select
+                      aria-label={`${member.username} role`}
+                      value={member.role}
+                      onChange={(event) => updateMemberRole(member, event.target.value as "editor" | "viewer")}
+                      className="text-input compact-input compact-select"
+                    >
+                      <option value="editor">Editor</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
                     <button
                       type="button"
                       className="inline-link danger-text"
