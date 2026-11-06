@@ -275,6 +275,31 @@ class AIApiTests(TestCase):
         )
         self.assertEqual(unavailable.status_code, 503)
 
+    def test_ai_streaming_requests_require_csrf_protection(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        payload = {
+            "provider": "openai",
+            "action": "summarize",
+            "context": "A short document.",
+        }
+        with (
+            patch.dict("os.environ", {"AI_OPENAI_API_KEY": "server-only-key"}),
+            patch("editor.views.stream_completion", return_value=iter(["Summary."])),
+        ):
+            rejected = client.post(self.url, data=payload, content_type="application/json")
+            self.assertEqual(rejected.status_code, 403)
+
+            csrf_token = client.get("/api/csrf/").json()["csrfToken"]
+            accepted = client.post(
+                self.url,
+                data=payload,
+                content_type="application/json",
+                HTTP_X_CSRFTOKEN=csrf_token,
+            )
+            self.assertEqual(accepted.status_code, 200)
+            b"".join(accepted.streaming_content)
+
     def test_ai_endpoint_validates_types_and_size(self):
         for payload in (
             {"provider": [], "action": "chat", "prompt": "Question"},
