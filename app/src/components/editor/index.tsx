@@ -32,11 +32,13 @@ import {
   EditorComponent,
   OnChangeJSON,
 } from "@remirror/react";
+import AIAssistant from "./ai-assistant";
 
 export interface Props {
   username: string;
   userId: number;
   fileId: string;
+  documentName: string;
   workspaceId: string;
   initialContent: Record<string, unknown> | unknown[];
   onSyncStatusChange?: (status: SyncStatus) => void;
@@ -157,6 +159,12 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
             "scrollbar-hide",
           ]}
         >
+          <AIAssistant
+            workspaceId={props.workspaceId}
+            fileId={props.fileId}
+            documentName={props.documentName}
+            editable={editable}
+          />
           <div className="editor-inner-surface">
             <EditorComponent />
             <OnChangeJSON

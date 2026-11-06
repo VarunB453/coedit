@@ -627,6 +627,7 @@ const App = () => {
                   username={user.username}
                   userId={user.id}
                   fileId={activeEntry.id}
+                  documentName={activeEntry.name}
                   workspaceId={workspaceId!}
                   initialContent={activeEntry.content}
                   editable={canEdit}
