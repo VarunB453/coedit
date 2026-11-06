@@ -125,7 +125,9 @@ const App = () => {
 
   const acceptPendingShare = async () => {
     const query = new URLSearchParams(window.location.search);
-    const token = query.get("share");
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const tokenFromHash = hashParams.get("share");
+    const token = tokenFromHash ?? query.get("share");
     if (!token) return null;
     const response = await apiFetch(`${API_BASE}/api/share/${encodeURIComponent(token)}/accept/`, {
       method: "POST",
@@ -134,7 +136,11 @@ const App = () => {
     if (!response.ok) throw new Error(result.error ?? "This sharing link is invalid or expired.");
     query.delete("share");
     query.set("workspace", result.workspace_id);
-    window.history.replaceState(null, "", `${window.location.pathname}?${query}${window.location.hash}`);
+    hashParams.delete("share");
+    const hash = tokenFromHash
+      ? hashParams.size ? `#${hashParams}` : ""
+      : window.location.hash;
+    window.history.replaceState(null, "", `${window.location.pathname}?${query}${hash}`);
     return result.workspace_id as string;
   };
 
@@ -544,8 +550,7 @@ const App = () => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "Could not create sharing link.");
       const url = new URL(window.location.href);
-      url.searchParams.delete("workspace");
-      url.searchParams.set("share", result.token);
+      url.hash = new URLSearchParams({ share: result.token }).toString();
       setShareLink(url.toString());
       await navigator.clipboard.writeText(url.toString());
       setLinkCopied(true);
