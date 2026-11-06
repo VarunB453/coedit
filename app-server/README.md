@@ -33,7 +33,8 @@ CI runs the Django checks, migration consistency check, Django tests, and TypeSc
 ## Remaining operational risks
 
 - Durable Yjs updates and document snapshots are retained without compaction or a retention policy; storage and reconnect replay costs grow with usage.
-- - The application has no built-in per-user/IP API rate limiting. Add limits at a trusted proxy or API gateway, especially for registration and AI requests.
+- The application has no built-in per-user/IP API rate limiting. Add limits at a trusted proxy or API gateway, especially for registration and AI requests.
+- No application-level response cache is configured; introduce shared caching only for measured read hotspots with explicit invalidation.
 - The repository does not include browser-level interaction tests, a deployment manifest, or automated database/Redis backups. Configure and exercise backups and restore procedures before production use.
 - Monitor the production build's lazy editor chunk and update the browser compatibility dataset when dependencies are refreshed.
 - HSTS subdomain coverage and browser preload are intentionally not enabled by default; `check --deploy` reports those policy choices so they can be reviewed against the deployed domain.
