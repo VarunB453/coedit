@@ -24,7 +24,7 @@ Workspace members can search accessible documents, comment on files, and view do
 
 The application requires a production `SECRET_KEY`; `DEBUG` defaults to `false`. Set `ALLOWED_HOSTS` to the exact host names served by Django. Set `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` to the exact browser origin(s), including scheme and port. Their localhost development defaults are disabled when `DEBUG=false`. Session and CSRF cookies are secure and HTTP-only outside debug mode. Production defaults redirect to HTTPS and enable one-year HSTS; set `SECURE_HSTS_SECONDS=0` only when HTTPS is not yet guaranteed, and enable subdomains only if every subdomain is HTTPS-capable.
 
-For a single-process local development setup, SQLite is used by default. For production, install `psycopg` and set `DATABASE_ENGINE=postgresql`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, and optionally `POSTGRES_PORT` and `DATABASE_CONN_MAX_AGE`. SQLite is not appropriate for multiple application workers or replicas.
+For a single-process local development setup, SQLite is used by default. For production, install `psycopg` and set `DATABASE_ENGINE=postgresql`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, and optionally `POSTGRES_PORT` and `DATABASE_CONN_MAX_AGE`. Persistent connections default to disabled for ASGI workers; use a managed pooler before increasing the connection age. SQLite is not appropriate for multiple application workers or replicas.
 
 The Channels layer uses `REDIS_URL` (default `redis://127.0.0.1:6379/0`). Production workers must share a durable Redis service. Serve the ASGI application (for example, `daphne core.asgi:application`) behind an HTTPS-terminating reverse proxy that overwrites `X-Forwarded-Proto`, run `python manage.py migrate` and `python manage.py collectstatic`, and serve the frontend's production build. Do not expose Django directly when relying on the forwarded-protocol header. Configure `VITE_API_URL` at frontend build time when the API is hosted on another origin. Application logs go to standard output; `LOG_LEVEL` controls their minimum level.
 
@@ -33,6 +33,7 @@ CI runs the Django checks, migration consistency check, Django tests, and TypeSc
 ## Remaining operational risks
 
 - Durable Yjs updates and document snapshots are retained without compaction or a retention policy; storage and reconnect replay costs grow with usage.
-- The application has no built-in per-user/IP API rate limiting. Add limits at a trusted proxy or API gateway, especially for registration and AI requests.
+- - The application has no built-in per-user/IP API rate limiting. Add limits at a trusted proxy or API gateway, especially for registration and AI requests.
 - The repository does not include browser-level interaction tests, a deployment manifest, or automated database/Redis backups. Configure and exercise backups and restore procedures before production use.
 - Monitor the production build's lazy editor chunk and update the browser compatibility dataset when dependencies are refreshed.
+- HSTS subdomain coverage and browser preload are intentionally not enabled by default; `check --deploy` reports those policy choices so they can be reviewed against the deployed domain.

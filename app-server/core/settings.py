@@ -118,7 +118,7 @@ if os.environ.get("DATABASE_ENGINE", "sqlite").lower() == "postgresql":
         "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
         "HOST": os.environ.get("POSTGRES_HOST", "127.0.0.1"),
         "PORT": os.environ.get("POSTGRES_PORT", "5432"),
-        "CONN_MAX_AGE": int(os.environ.get("DATABASE_CONN_MAX_AGE", "60")),
+        "CONN_MAX_AGE": int(os.environ.get("DATABASE_CONN_MAX_AGE", "0")),
     }
 elif os.environ.get("DATABASE_ENGINE", "sqlite").lower() != "sqlite":
     raise ImproperlyConfigured("DATABASE_ENGINE must be 'sqlite' or 'postgresql'.")
