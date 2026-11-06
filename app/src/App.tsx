@@ -284,7 +284,7 @@ const App = () => {
     []
   );
 
-  const saveHistorySnapshot = useCallback((content: Record<string, unknown> | unknown[]) => {
+  const saveHistorySnapshot = useCallback((content: unknown) => {
     if (!documentUrl) return;
     const now = Date.now();
     if (now - (lastSnapshotByDocument.current[documentUrl] ?? 0) < 30000) return;

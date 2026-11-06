@@ -42,7 +42,7 @@ export interface Props {
   workspaceId: string;
   initialContent: Record<string, unknown> | unknown[];
   onSyncStatusChange?: (status: SyncStatus) => void;
-  onDocumentChange?: (content: Record<string, unknown> | unknown[]) => void;
+  onDocumentChange?: (content: unknown) => void;
   editable?: boolean;
 }
 
@@ -175,7 +175,7 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
             <OnChangeJSON
               onChange={(json) => {
                 onChange(json as any);
-                onDocumentChange?.(json as Record<string, unknown> | unknown[]);
+                onDocumentChange?.(json);
               }}
             />
           </div>
