@@ -107,6 +107,7 @@ const App = () => {
   const [shareError, setShareError] = useState("");
   const [shareRole, setShareRole] = useState<"editor" | "viewer">("editor");
   const lastSnapshotByDocument = useRef<Record<string, number>>({});
+  const pendingDocumentId = useRef<string | null>(null);
   const selectedEntry = entries.find((entry) => entry.id === selectedId);
   const activeEntry = selectedEntry?.kind === "file" ? selectedEntry : undefined;
   const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
@@ -268,7 +269,9 @@ const App = () => {
         ));
         setLoadError("");
         const firstFile = result.entries.find((entry) => entry.kind === "file");
-        setSelectedId(firstFile?.id ?? null);
+        const requestedEntry = result.entries.find((entry) => entry.id === pendingDocumentId.current);
+        setSelectedId(requestedEntry?.id ?? firstFile?.id ?? null);
+        pendingDocumentId.current = null;
       })
       .catch(() => {
         if (active) setLoadError("Unable to load this workspace. Check your access and retry.");
@@ -783,12 +786,24 @@ const App = () => {
             Sign out
           </button>
           {workspaceRole === "owner" && (
-            <button type="button" disabled={!workspaceId} onClick={createShareLink} className="soft-button primary-soft-button">
-              {linkCopied ? "Invite link copied" : "Create invite link"}
-            </button>
+            <>
+              <select aria-label="Invite role" value={shareRole} onChange={(event) => setShareRole(event.target.value as "editor" | "viewer")} className="text-input compact-input compact-select">
+                <option value="editor">Invite editor</option>
+                <option value="viewer">Invite viewer</option>
+              </select>
+              <button type="button" disabled={!workspaceId} onClick={createShareLink} className="soft-button primary-soft-button">
+                {linkCopied ? "Invite link copied" : "Create invite link"}
+              </button>
+            </>
           )}
         </div>
       </header>
+      {(shareError || shareLink) && (
+        <div className="share-feedback" role={shareError ? "alert" : "status"}>
+          {shareError || <>Invite link (expires in 7 days): <a href={shareLink}>{shareLink}</a></>}
+          <button type="button" className="inline-link" onClick={() => { setShareLink(""); setShareError(""); setLinkCopied(false); }}>Dismiss</button>
+        </div>
+      )}
 
       <div className="app-layout">
         <aside className="sidebar-panel">
@@ -805,7 +820,10 @@ const App = () => {
                   className={`activity-row ${notification.read ? "" : "activity-unread"}`}
                   onClick={() => {
                     selectWorkspace(notification.workspace_id);
-                    if (notification.document_id) setSelectedId(notification.document_id);
+                    if (notification.document_id) {
+                      pendingDocumentId.current = notification.document_id;
+                      setSelectedId(notification.document_id);
+                    }
                     setShowNotifications(false);
                   }}
                 >
@@ -848,8 +866,12 @@ const App = () => {
                     key={result.id}
                     className="search-result"
                     onClick={() => {
-                      if (result.workspace_id !== workspaceId) selectWorkspace(result.workspace_id);
-                      setSelectedId(result.id);
+                      if (result.workspace_id !== workspaceId) {
+                        pendingDocumentId.current = result.id;
+                        selectWorkspace(result.workspace_id);
+                      } else {
+                        setSelectedId(result.id);
+                      }
                       setSearchInput("");
                     }}
                   >
@@ -1153,6 +1175,39 @@ const App = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {profileOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="account-title" className="modal-card settings-modal">
+            <div className="section-heading-row">
+              <div>
+                <p className="eyebrow">Account</p>
+                <h2 id="account-title">Settings</h2>
+              </div>
+              <button type="button" className="inline-link" onClick={() => setProfileOpen(false)}>Close</button>
+            </div>
+            <form onSubmit={saveProfile} className="settings-form">
+              <label htmlFor="profile-name" className="field-label">Display name</label>
+              <input id="profile-name" value={profileName} onChange={(event) => setProfileName(event.target.value)} maxLength={100} className="text-input" />
+              <label htmlFor="profile-email" className="field-label">Email</label>
+              <input id="profile-email" type="email" value={profileEmail} onChange={(event) => setProfileEmail(event.target.value)} maxLength={254} className="text-input" />
+              <label htmlFor="current-password" className="field-label">Current password (to change password)</label>
+              <input id="current-password" type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} className="text-input" />
+              <label htmlFor="new-password" className="field-label">New password</label>
+              <input id="new-password" type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} className="text-input" />
+              <button type="submit" className="primary-btn">Save account settings</button>
+            </form>
+            {workspaceRole === "owner" && (
+              <form onSubmit={renameWorkspace} className="settings-form workspace-settings-form">
+                <h3>Workspace</h3>
+                <label htmlFor="workspace-name" className="field-label">Workspace name</label>
+                <input id="workspace-name" value={workspaceNameInput} onChange={(event) => setWorkspaceNameInput(event.target.value)} maxLength={100} className="text-input" />
+                <button type="submit" className="soft-button subtle-button">Save workspace</button>
+              </form>
+            )}
+            {profileMessage && <p role="status" className="invite-status">{profileMessage}</p>}
+          </section>
         </div>
       )}
     </main>
