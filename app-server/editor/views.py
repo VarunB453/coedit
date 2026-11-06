@@ -11,6 +11,7 @@ from channels.layers import get_channel_layer
 from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import JsonResponse, StreamingHttpResponse
@@ -172,6 +173,11 @@ def auth_profile(request):
 		return _error("Display name must be 100 characters or fewer.", 400)
 	if not isinstance(email, str) or len(email.strip()) > 254:
 		return _error("Email must be 254 characters or fewer.", 400)
+	try:
+		validate_email(email.strip())
+	except ValidationError:
+		if email.strip():
+			return _error("Enter a valid email address.", 400)
 	new_password = body.get("new_password")
 	if new_password is not None:
 		if not isinstance(body.get("current_password"), str) or not request.user.check_password(body["current_password"]):
@@ -503,9 +509,17 @@ def workspace_members(request, workspace_id):
 		return _error("User was not found.", 404)
 	if user.id == request.user.id:
 		return _error("The owner already has full access.", 400)
+	previous_role = WorkspaceMembership.objects.filter(workspace=workspace, user=user).values_list(
+		"role", flat=True
+	).first()
 	membership, created = WorkspaceMembership.objects.update_or_create(
 		workspace=workspace, user=user, defaults={"role": member_role}
 	)
+	if previous_role != membership.role:
+		Notification.objects.create(
+			user=user, workspace=workspace, kind="workspace_access",
+			message=f"{workspace.name} shared with you as {membership.role}.",
+		)
 	if not created:
 		async_to_sync(get_channel_layer().group_send)(
 			f"editor_user_{user.id}", {"type": "editor_access_changed"}
