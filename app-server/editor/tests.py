@@ -490,7 +490,10 @@ class AIProviderStreamTests(TestCase):
                 self.closed = True
 
         response = InterruptedResponse()
-        with patch("editor.ai.urlopen", return_value=response):
+        with (
+            patch("editor.ai.urlopen", return_value=response),
+            patch.dict("os.environ", {"AI_OPENAI_API_KEY": "test-key"}),
+        ):
             stream = stream_completion("openai", [])
             self.assertEqual(next(stream), "partial")
             with self.assertRaisesRegex(RuntimeError, "stream was interrupted"):
