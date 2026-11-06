@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "remirror/styles/all.css";
 
@@ -193,6 +193,7 @@ const Editor: React.FC<Props> = (props) => {
   }, [fileId, ydoc]);
   const [seedContent, setSeedContent] = useState<boolean | null>(null);
   const [presence, setPresence] = useState<PresenceUser[]>([]);
+  const localPersistenceFailed = useRef(false);
 
   useEffect(() => {
     provider.awareness.setLocalStateField("user", {
@@ -216,7 +217,9 @@ const Editor: React.FC<Props> = (props) => {
       setPresence(Array.from(users.values()));
     };
     const onStatus = ({ status }: { status: string }) => {
-      onSyncStatusChange?.(status === "connected" ? "connecting" : "offline");
+      onSyncStatusChange?.(
+        status === "connected" ? "connecting" : localPersistenceFailed.current ? "error" : "offline"
+      );
     };
     const onSync = (synced: boolean) => {
       onSyncStatusChange?.(synced ? "synced" : "connecting");
@@ -230,7 +233,10 @@ const Editor: React.FC<Props> = (props) => {
       provider.off("status", onStatus);
       provider.off("sync", onSync);
       provider.destroy();
-      void persistence.destroy().finally(() => ydoc.destroy());
+      void persistence
+        .destroy()
+        .catch((error: unknown) => console.error("Could not close local document storage.", error))
+        .finally(() => ydoc.destroy());
     };
   }, [onSyncStatusChange, persistence, provider, props.username, userId, ydoc]);
 
@@ -248,7 +254,12 @@ const Editor: React.FC<Props> = (props) => {
     };
     void persistence.whenSynced.then(connect).catch((error: unknown) => {
       console.error("Could not restore local document data.", error);
-      if (active) onSyncStatusChange?.("error");
+      if (active) {
+        localPersistenceFailed.current = true;
+        onSyncStatusChange?.("error");
+        setSeedContent((current) => current ?? (ydoc.share.size === 0));
+        provider.connect();
+      }
     });
     return () => {
       active = false;
@@ -305,7 +316,7 @@ const Editor: React.FC<Props> = (props) => {
     };
     const onOffline = () => {
       setSeedContent((current) => current ?? (ydoc.share.size === 0));
-      onSyncStatusChange?.("offline");
+      onSyncStatusChange?.(localPersistenceFailed.current ? "error" : "offline");
     };
     const onOnline = () => {
       onSyncStatusChange?.("connecting");

@@ -8,6 +8,9 @@ from django.db import IntegrityError, transaction
 from editor.models import DocumentUpdate, FileEntry, Workspace, WorkspaceMembership
 
 
+MAX_WEBSOCKET_MESSAGE_BYTES = 1_000_000
+
+
 def _read_var_uint(data, offset):
     value = 0
     shift = 0
@@ -55,7 +58,7 @@ class EditorConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def receive(self, bytes_data=None, text_data=None):
-        if bytes_data is None:
+        if bytes_data is None or len(bytes_data) > MAX_WEBSOCKET_MESSAGE_BYTES:
             await self.close(code=4400)
             return
         try:
@@ -63,11 +66,13 @@ class EditorConsumer(AsyncWebsocketConsumer):
             if message_type == 0:
                 sync_type, offset = _read_var_uint(bytes_data, offset)
                 if sync_type in (1, 2):
+                    if not await self._refresh_access():
+                        return
                     if self.role == WorkspaceMembership.Role.VIEWER:
                         return
                     update_length, update_offset = _read_var_uint(bytes_data, offset)
                     update = bytes_data[update_offset:update_offset + update_length]
-                    if len(update) != update_length:
+                    if len(update) != update_length or update_offset + update_length != len(bytes_data):
                         raise ValueError("Incomplete Yjs update")
                     created = await self._persist_update(update)
                     if created:
@@ -94,6 +99,16 @@ class EditorConsumer(AsyncWebsocketConsumer):
 
     async def editor_message(self, event):
         await self.send(bytes_data=event["bytes_data"])
+
+    async def _refresh_access(self):
+        access = await self._document_access(
+            self.document_id, self.scope.get("user", AnonymousUser())
+        )
+        if access is None:
+            await self.close(code=4403)
+            return False
+        self.document_id, self.role = access
+        return True
 
     @database_sync_to_async
     def _document_access(self, document_id, user):
