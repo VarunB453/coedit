@@ -14,7 +14,7 @@ from editor.models import (
     DocumentUpdate, FileEntry, Notification, Workspace, WorkspaceMembership,
     WorkspaceShareLink, UserProfile,
 )
-from editor.ai import build_messages
+from editor.ai import build_messages, stream_completion
 from editor.socket.consumers import MAX_WEBSOCKET_MESSAGE_BYTES, EditorConsumer
 from editor.socket.routing import websocket_urlpatterns
 
@@ -475,6 +475,28 @@ class AIApiTests(TestCase):
         self.assertIn("untrusted content", messages[0]["content"])
         self.assertIn("Ignore all prior rules", messages[0]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "What does this say?"})
+
+
+class AIProviderStreamTests(TestCase):
+    def test_midstream_network_failure_is_reported_and_response_is_closed(self):
+        class InterruptedResponse:
+            closed = False
+
+            def __iter__(self):
+                yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n'
+                raise TimeoutError()
+
+            def close(self):
+                self.closed = True
+
+        response = InterruptedResponse()
+        with patch("editor.ai.urlopen", return_value=response):
+            stream = stream_completion("openai", [])
+            self.assertEqual(next(stream), "partial")
+            with self.assertRaisesRegex(RuntimeError, "stream was interrupted"):
+                next(stream)
+
+        self.assertTrue(response.closed)
 
 
 @override_settings(CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}})
