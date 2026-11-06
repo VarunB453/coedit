@@ -1124,6 +1124,39 @@ p, h1, h2, h3, h4 {
   background: rgba(248, 250, 252, 0.76);
 }
 
+.ai-conversation {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.ai-message {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ai-message strong {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ai-message-user {
+  background: rgba(27, 94, 82, 0.08);
+}
+
+.ai-message-assistant {
+  background: rgba(148, 163, 184, 0.1);
+}
+
 .ai-result-heading strong {
   font-size: 0.8rem;
 }

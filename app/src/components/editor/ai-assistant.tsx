@@ -147,13 +147,14 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
           ...(instruction ? [{ role: "user" as const, content: instruction }] : []),
           { role: "assistant", content: accumulated },
         ].slice(-12));
+        setOutput("");
+        setOutputAction(null);
       }
       setPrompt("");
     } catch (requestError) {
-      if (requestError instanceof Error && requestError.name === "AbortError") {
-        setOutput("");
-        setOutputAction(null);
-      } else {
+      setOutput("");
+      setOutputAction(null);
+      if (!(requestError instanceof Error && requestError.name === "AbortError")) {
         setError(requestError instanceof Error ? requestError.message : "AI request failed.");
       }
     } finally {
@@ -224,7 +225,9 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
                     }
                     onClick={() => void runAction(
                       action,
-                      action === "rewrite" ? "Make the writing clearer and more concise." : prompt.trim()
+                      action === "rewrite"
+                        ? prompt.trim() || "Make the writing clearer and more concise."
+                        : prompt.trim()
                     )}
                   >
                     {actionLabels[action]}
@@ -253,6 +256,16 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
                 </div>
               </form>
               {error && <p role="alert" className="ai-error">{error}</p>}
+              {history.length > 0 && (
+                <div className="ai-conversation" aria-live="polite">
+                  {history.map((message, index) => (
+                    <p key={`${index}-${message.role}`} className={`ai-message ai-message-${message.role}`}>
+                      <strong>{message.role === "user" ? "You" : "AI"}</strong>
+                      <span>{message.content}</span>
+                    </p>
+                  ))}
+                </div>
+              )}
               {output && (
                 <div className="ai-result">
                   <div className="ai-result-heading">
