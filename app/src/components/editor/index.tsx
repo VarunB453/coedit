@@ -179,7 +179,7 @@ const apiBase =
 
 const Editor: React.FC<Props> = (props) => {
   const { fileId, userId, workspaceId, editable = true, onSyncStatusChange } = props;
-  const ydoc = useMemo(() => new Y.Doc(), [fileId]);
+  const ydoc = useMemo(() => new Y.Doc(), [fileId, userId]);
   const persistence = useMemo(
     () => new IndexeddbPersistence(`coedit:${userId}:${fileId}`, ydoc),
     [fileId, userId, ydoc]
