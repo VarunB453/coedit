@@ -2,7 +2,7 @@ services:
   server:
     build:
       context: .
-      dockerfile: infrastructure/docker/server.Dockerfile
+      dockerfile: apps/server/Dockerfile
     command: sh -c "python manage.py migrate && daphne -b 0.0.0.0 -p 8000 core.asgi:application"
     environment:
       DEBUG: "true"
@@ -23,7 +23,7 @@ services:
   web:
     build:
       context: .
-      dockerfile: infrastructure/docker/web.Dockerfile
+      dockerfile: apps/web/Dockerfile
     command: npm run dev -- --host 0.0.0.0
     environment:
       VITE_API_URL: http://localhost:8000

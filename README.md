@@ -15,4 +15,4 @@ Install backend dependencies with `pip install -r apps/server/requirements.txt`.
 
 For a containerized local development environment, run `docker compose up --build`; the frontend, Django/Channels backend, and Redis are exposed on ports 5173, 8000, and 6379. The development compose file uses a local-only fallback key; configure a private `SECRET_KEY` for any shared or deployed environment.
 
-The CI workflow builds the frontend and runs Django checks and tests. See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup and validation, [SECURITY.md](./SECURITY.md) for vulnerability reporting, and [docs/architecture/layout.md](./docs/architecture/layout.md) for implemented versus scaffolded areas.
+The CI workflow builds the frontend and runs Django checks and tests. See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup and validation, and [SECURITY.md](./SECURITY.md) for vulnerability reporting. Dockerfiles for local development are kept alongside each application.
