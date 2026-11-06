@@ -29,7 +29,7 @@ const actionLabels: Record<Action, string> = {
 
 const textToDocument = (text: string) => ({
   type: "doc",
-  content: text.split(/\n{2,}/).map((paragraph) => ({
+  content: text.split(/\n+/).map((paragraph) => ({
     type: "paragraph",
     ...(paragraph ? { content: [{ type: "text", text: paragraph }] } : {}),
   })),
@@ -145,7 +145,7 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
         setHistory((current) => [
           ...current,
           ...(instruction ? [{ role: "user" as const, content: instruction }] : []),
-          { role: "assistant", content: accumulated },
+          { role: "assistant" as const, content: accumulated },
         ].slice(-12));
         setOutput("");
         setOutputAction(null);

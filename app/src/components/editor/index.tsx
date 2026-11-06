@@ -70,6 +70,9 @@ const userColor = (userId: number) => colors[userId % colors.length];
 const EditorSurface: React.FC<EditorSurfaceProps> = ({
   username,
   initialContent,
+  workspaceId,
+  fileId,
+  documentName,
   editable = true,
   provider,
   seedContent,
@@ -160,9 +163,9 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
           ]}
         >
           <AIAssistant
-            workspaceId={props.workspaceId}
-            fileId={props.fileId}
-            documentName={props.documentName}
+            workspaceId={workspaceId}
+            fileId={fileId}
+            documentName={documentName}
             editable={editable}
           />
           <div className="editor-inner-surface">

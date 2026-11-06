@@ -58,7 +58,7 @@ def _provider_request(provider, messages):
 	if provider == "openai":
 		url = f"{base_url}/chat/completions"
 		headers = {"Authorization": f"Bearer {api_key}"}
-		payload = {"model": model, "messages": messages, "stream": True}
+		payload = {"model": model, "messages": messages, "stream": True, "max_tokens": 4096}
 	elif provider == "anthropic":
 		url = f"{base_url}/v1/messages"
 		headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
@@ -83,7 +83,11 @@ def _provider_request(provider, messages):
 			if message["role"] != "system"
 		]
 		system = "\n\n".join(message["content"] for message in messages if message["role"] == "system")
-		payload = {"contents": contents, "systemInstruction": {"parts": [{"text": system}]}}
+		payload = {
+			"contents": contents,
+			"systemInstruction": {"parts": [{"text": system}]},
+			"generationConfig": {"maxOutputTokens": 4096},
+		}
 
 	headers["Content-Type"] = "application/json"
 	request = Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
