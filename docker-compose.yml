@@ -1,0 +1,44 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/server.Dockerfile
+    command: sh -c "python manage.py migrate && daphne -b 0.0.0.0 -p 8000 core.asgi:application"
+    environment:
+      DEBUG: "true"
+      SECRET_KEY: ${SECRET_KEY:-unsafe-local-development-key}
+      ALLOWED_HOSTS: localhost,127.0.0.1,server
+      CORS_ALLOWED_ORIGINS: http://localhost:5173
+      CSRF_TRUSTED_ORIGINS: http://localhost:5173
+      REDIS_URL: redis://redis:6379/0
+      SQLITE_PATH: /data/db.sqlite3
+    ports:
+      - "8000:8000"
+    volumes:
+      - coedit-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/web.Dockerfile
+    command: npm run dev -- --host 0.0.0.0
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - server
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  coedit-data:

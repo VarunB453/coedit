@@ -4,6 +4,9 @@
   "scripts": {
     "dev": "npm --prefix apps/web run dev",
     "build": "npm --prefix apps/web run build",
-    "preview": "npm --prefix apps/web run preview"
+    "preview": "npm --prefix apps/web run preview",
+    "dev:server": "python apps/server/manage.py runserver",
+    "check:server": "python apps/server/manage.py check",
+    "test:server": "python apps/server/manage.py test editor"
   }
 }
