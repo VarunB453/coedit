@@ -16,7 +16,7 @@ type CommentInfo = { id: number; body: string; author: string; created_at: strin
 type VersionInfo = { id: number; author: string; created_at: string };
 type SearchResult = { id: string; name: string; workspace_id: string; workspace_name: string; updated_at: string };
 type NotificationInfo = { id: number; kind: string; message: string; workspace_id: string; document_id: string | null; created_at: string; read: boolean };
-type MemberInfo = { id: number; username: string; role: "owner" | "editor" | "viewer" };
+type MemberInfo = { id: number; username: string; display_name?: string; role: "owner" | "editor" | "viewer" };
 
 type DialogMode = "create-file" | "create-folder" | "rename";
 
@@ -955,7 +955,7 @@ const App = () => {
               <div className="member-list">
                 {members.filter((member) => member.role !== "owner").map((member) => (
                   <div key={member.id} className="member-row">
-                    <span>{member.username}</span>
+                    <span>{member.display_name || member.username}</span>
                     <select
                       aria-label={`${member.username} role`}
                       value={member.role}
@@ -1023,7 +1023,7 @@ const App = () => {
               <div className="editor-scroll-region">
                 <Editor
                   key={activeEntry.id}
-                  username={user.username}
+                  username={user.display_name || user.username}
                   userId={user.id}
                   fileId={activeEntry.id}
                   documentName={activeEntry.name}

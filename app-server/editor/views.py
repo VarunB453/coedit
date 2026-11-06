@@ -155,6 +155,11 @@ def _user_payload(user):
 	}
 
 
+def _display_name(user):
+	profile = getattr(user, "profile", None)
+	return (profile.display_name if profile else "") or user.get_username()
+
+
 @require_http_methods(["GET", "PATCH"])
 def auth_profile(request):
 	if not _authenticated(request):
@@ -373,10 +378,10 @@ def document_comments(request, workspace_id, file_id):
 	if error:
 		return error
 	if request.method == "GET":
-		comments = entry.comments.select_related("author").all()
+		comments = entry.comments.select_related("author__profile").all()
 		return JsonResponse([
 			{"id": comment.id, "body": comment.body,
-			 "author": comment.author.get_username() if comment.author else "Former user",
+			 "author": _display_name(comment.author) if comment.author else "Former user",
 			 "created_at": comment.created_at.isoformat(),
 			 "resolved": comment.resolved_at is not None}
 			for comment in comments
@@ -398,7 +403,7 @@ def document_comments(request, workspace_id, file_id):
 		for user_id in recipients
 	])
 	return JsonResponse({
-		"id": comment.id, "body": comment.body, "author": request.user.get_username(),
+		"id": comment.id, "body": comment.body, "author": _display_name(request.user),
 		"created_at": comment.created_at.isoformat(), "resolved": False,
 	}, status=201)
 
@@ -424,9 +429,9 @@ def document_history(request, workspace_id, file_id):
 	if error:
 		return error
 	if request.method == "GET":
-		versions = entry.versions.select_related("author")[:50]
+		versions = entry.versions.select_related("author__profile")[:50]
 		return JsonResponse([
-			{"id": version.id, "author": version.author.get_username() if version.author else "Former user",
+			{"id": version.id, "author": _display_name(version.author) if version.author else "Former user",
 			 "created_at": version.created_at.isoformat()}
 			for version in versions
 		], safe=False)
@@ -479,7 +484,7 @@ def workspace_members(request, workspace_id):
 	if not _authenticated(request):
 		return _error("Authentication required.", 401)
 	try:
-		workspace = Workspace.objects.get(id=workspace_id)
+		workspace = Workspace.objects.select_related("owner__profile").get(id=workspace_id)
 	except Workspace.DoesNotExist:
 		return _error("Workspace was not found.", 404)
 	role = _workspace_role(workspace, request.user)
@@ -488,10 +493,16 @@ def workspace_members(request, workspace_id):
 	if request.method == "GET":
 		if role != "owner":
 			return _error("Only the workspace owner can manage members.", 403)
-		members = [{"id": workspace.owner_id, "username": workspace.owner.get_username(), "role": "owner"}]
+		members = [{
+			"id": workspace.owner_id,
+			"username": workspace.owner.get_username(),
+			"display_name": _display_name(workspace.owner),
+			"role": "owner",
+		}]
 		members.extend(
-			{"id": membership.user_id, "username": membership.user.get_username(), "role": membership.role}
-			for membership in workspace.memberships.select_related("user").order_by("user__username")
+			{"id": membership.user_id, "username": membership.user.get_username(),
+			 "display_name": _display_name(membership.user), "role": membership.role}
+			for membership in workspace.memberships.select_related("user__profile").order_by("user__username")
 		)
 		return JsonResponse(members, safe=False)
 	if role != "owner":
