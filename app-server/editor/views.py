@@ -1,27 +1,34 @@
 import json
+import hashlib
 import re
+import secrets
 import uuid
 from datetime import timedelta
 from math import ceil
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.http import JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
-from .models import FileEntry, Workspace, WorkspaceMembership
+from .models import (
+	DocumentComment, DocumentVersion, FileEntry, Notification, UserProfile,
+	Workspace, WorkspaceMembership, WorkspaceShareLink,
+)
 from .models import empty_document
 from .ai import ACTION_INSTRUCTIONS, PROVIDERS, available_providers, build_messages, stream_completion
 
 
 MAX_NAME_LENGTH = 100
 MAX_CONTENT_BYTES = 1_000_000
+MAX_COMMENT_LENGTH = 4000
 
 
 def _error(message, status):
@@ -126,7 +133,7 @@ def auth_session(request):
 	if request.method == "GET":
 		if not _authenticated(request):
 			return _error("Authentication required.", 401)
-		return JsonResponse({"id": request.user.id, "username": request.user.get_username()})
+		return JsonResponse(_user_payload(request.user))
 	body = _parse_body(request)
 	if body is None:
 		return _error("Request body must be a JSON object.", 400)
@@ -134,7 +141,54 @@ def auth_session(request):
 	if user is None:
 		return _error("Username or password is incorrect.", 401)
 	login(request, user)
-	return JsonResponse({"id": user.id, "username": user.get_username()})
+	return JsonResponse(_user_payload(user))
+
+
+def _user_payload(user):
+	profile, _ = UserProfile.objects.get_or_create(user=user)
+	return {
+		"id": user.id,
+		"username": user.get_username(),
+		"display_name": profile.display_name or user.get_username(),
+		"email": user.email,
+	}
+
+
+@require_http_methods(["GET", "PATCH"])
+def auth_profile(request):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	if request.method == "GET":
+		return JsonResponse(_user_payload(request.user))
+	body = _parse_body(request)
+	if body is None:
+		return _error("Request body must be a JSON object.", 400)
+	allowed = {"display_name", "email", "current_password", "new_password"}
+	if set(body) - allowed:
+		return _error("Profile fields are invalid.", 400)
+	display_name = body.get("display_name", "")
+	email = body.get("email", "")
+	if not isinstance(display_name, str) or len(display_name.strip()) > 100:
+		return _error("Display name must be 100 characters or fewer.", 400)
+	if not isinstance(email, str) or len(email.strip()) > 254:
+		return _error("Email must be 254 characters or fewer.", 400)
+	new_password = body.get("new_password")
+	if new_password is not None:
+		if not isinstance(body.get("current_password"), str) or not request.user.check_password(body["current_password"]):
+			return _error("Current password is incorrect.", 400)
+		try:
+			validate_password(new_password, request.user)
+		except ValidationError as error:
+			return _error(" ".join(error.messages), 400)
+		request.user.set_password(new_password)
+	request.user.email = email.strip()
+	request.user.save(update_fields=["email", "password"] if new_password is not None else ["email"])
+	profile, _ = UserProfile.objects.get_or_create(user=request.user)
+	profile.display_name = display_name.strip()
+	profile.save(update_fields=["display_name"])
+	if new_password is not None:
+		update_session_auth_hash(request, request.user)
+	return JsonResponse(_user_payload(request.user))
 
 
 @require_http_methods(["POST"])
@@ -159,7 +213,7 @@ def register(request):
 	except IntegrityError:
 		return _error("That username is already in use.", 409)
 	login(request, user)
-	return JsonResponse({"id": user.id, "username": user.get_username()}, status=201)
+	return JsonResponse(_user_payload(user), status=201)
 
 
 @require_http_methods(["POST"])
@@ -189,6 +243,223 @@ def workspaces(request):
 		return _error("Workspace name is invalid.", 400)
 	workspace = Workspace.objects.create(name=name, owner=request.user)
 	return JsonResponse({"id": str(workspace.id), "name": workspace.name, "role": "owner"}, status=201)
+
+
+@require_http_methods(["PATCH"])
+def workspace_detail(request, workspace_id):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	try:
+		workspace = Workspace.objects.get(id=workspace_id)
+	except Workspace.DoesNotExist:
+		return _error("Workspace was not found.", 404)
+	if workspace.owner_id != request.user.id:
+		return _error("Only the workspace owner can change workspace settings.", 403)
+	body = _parse_body(request)
+	if body is None or set(body) != {"name"}:
+		return _error("Provide a valid workspace name.", 400)
+	name = _validated_name(body.get("name"))
+	if name is None:
+		return _error("Workspace name is invalid.", 400)
+	workspace.name = name
+	workspace.save(update_fields=["name", "updated_at"])
+	return JsonResponse({"id": str(workspace.id), "name": workspace.name, "role": "owner"})
+
+
+@require_http_methods(["GET", "POST"])
+def workspace_share_links(request, workspace_id):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	try:
+		workspace = Workspace.objects.get(id=workspace_id)
+	except Workspace.DoesNotExist:
+		return _error("Workspace was not found.", 404)
+	if workspace.owner_id != request.user.id:
+		return _error("Only the workspace owner can manage sharing links.", 403)
+	if request.method == "GET":
+		links = WorkspaceShareLink.objects.filter(workspace=workspace, revoked_at__isnull=True)
+		return JsonResponse([
+			{"id": link.id, "role": link.role, "created_at": link.created_at.isoformat(),
+			 "expires_at": link.expires_at.isoformat() if link.expires_at else None}
+			for link in links.order_by("-created_at")
+		], safe=False)
+	body = _parse_body(request)
+	if body is None or body.get("role") not in WorkspaceMembership.Role.values:
+		return _error("Role must be 'editor' or 'viewer'.", 400)
+	expiration = body.get("expires_in_days", 7)
+	if expiration not in (1, 7, 30, None):
+		return _error("Link expiration must be 1, 7, or 30 days, or null.", 400)
+	token = secrets.token_urlsafe(32)
+	link = WorkspaceShareLink.objects.create(
+		workspace=workspace,
+		token_hash=WorkspaceShareLink.digest(token),
+		role=body["role"],
+		created_by=request.user,
+		expires_at=timezone.now() + timedelta(days=expiration) if expiration else None,
+	)
+	return JsonResponse({
+		"id": link.id, "role": link.role, "token": token,
+		"expires_at": link.expires_at.isoformat() if link.expires_at else None,
+	}, status=201)
+
+
+@require_http_methods(["DELETE"])
+def workspace_share_link(request, workspace_id, link_id):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	try:
+		link = WorkspaceShareLink.objects.get(id=link_id, workspace_id=workspace_id)
+	except WorkspaceShareLink.DoesNotExist:
+		return _error("Sharing link was not found.", 404)
+	if link.workspace.owner_id != request.user.id:
+		return _error("Only the workspace owner can manage sharing links.", 403)
+	link.revoked_at = timezone.now()
+	link.save(update_fields=["revoked_at"])
+	return JsonResponse({})
+
+
+@require_http_methods(["POST"])
+def accept_share_link(request, token):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	link = WorkspaceShareLink.objects.select_related("workspace").filter(
+		token_hash=WorkspaceShareLink.digest(token), revoked_at__isnull=True
+	).first()
+	if link is None or (link.expires_at and link.expires_at <= timezone.now()):
+		return _error("This sharing link is invalid or expired.", 404)
+	if link.workspace.owner_id == request.user.id:
+		return JsonResponse({"workspace_id": str(link.workspace_id), "role": "owner"})
+	WorkspaceMembership.objects.update_or_create(
+		workspace=link.workspace, user=request.user, defaults={"role": link.role}
+	)
+	if link.workspace.owner_id:
+		Notification.objects.create(
+			user_id=link.workspace.owner_id, workspace=link.workspace, kind="member_joined",
+			message=f"{request.user.get_username()} joined {link.workspace.name}.",
+		)
+	return JsonResponse({"workspace_id": str(link.workspace_id), "role": link.role})
+
+
+@require_http_methods(["GET"])
+def search_documents(request):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	query = request.GET.get("q", "").strip()
+	workspace_id = request.GET.get("workspace")
+	if len(query) < 2 or len(query) > 100:
+		return _error("Search must be between 2 and 100 characters.", 400)
+	entries = FileEntry.objects.filter(kind=FileEntry.Kind.FILE).filter(
+		Q(workspace__owner=request.user) | Q(workspace__memberships__user=request.user)
+	).filter(Q(name__icontains=query) | Q(content__icontains=query)).select_related("workspace")
+	if workspace_id:
+		entries = entries.filter(workspace_id=workspace_id)
+	results = [
+		{"id": str(entry.id), "name": entry.name, "workspace_id": str(entry.workspace_id),
+		 "workspace_name": entry.workspace.name, "updated_at": entry.updated_at.isoformat()}
+		for entry in entries.distinct().order_by("-updated_at")[:50]
+	]
+	return JsonResponse({"results": results})
+
+
+@require_http_methods(["GET", "POST"])
+def document_comments(request, workspace_id, file_id):
+	entry, role, error = _member_document(request, workspace_id, file_id)
+	if error:
+		return error
+	if request.method == "GET":
+		comments = entry.comments.select_related("author").all()
+		return JsonResponse([
+			{"id": comment.id, "body": comment.body,
+			 "author": comment.author.get_username() if comment.author else "Former user",
+			 "created_at": comment.created_at.isoformat(),
+			 "resolved": comment.resolved_at is not None}
+			for comment in comments
+		], safe=False)
+	body = _parse_body(request)
+	text = body.get("body") if body else None
+	if not isinstance(text, str) or not text.strip() or len(text.strip()) > MAX_COMMENT_LENGTH:
+		return _error("Comment must be between 1 and 4,000 characters.", 400)
+	comment = DocumentComment.objects.create(document=entry, author=request.user, body=text.strip())
+	if entry.workspace.owner_id and entry.workspace.owner_id != request.user.id:
+		Notification.objects.create(
+			user_id=entry.workspace.owner_id, workspace=entry.workspace, document=entry,
+			kind="comment", message=f"{request.user.get_username()} commented on {entry.name}.",
+		)
+	return JsonResponse({
+		"id": comment.id, "body": comment.body, "author": request.user.get_username(),
+		"created_at": comment.created_at.isoformat(), "resolved": False,
+	}, status=201)
+
+
+def _member_document(request, workspace_id, file_id):
+	if not _authenticated(request):
+		return None, None, _error("Authentication required.", 401)
+	try:
+		entry = FileEntry.objects.select_related("workspace").get(
+			id=file_id, workspace_id=workspace_id, kind=FileEntry.Kind.FILE
+		)
+	except FileEntry.DoesNotExist:
+		return None, None, _error("Document was not found.", 404)
+	role = _workspace_role(entry.workspace, request.user)
+	if role is None:
+		return None, None, _error("Document was not found.", 404)
+	return entry, role, None
+
+
+@require_http_methods(["GET", "POST"])
+def document_history(request, workspace_id, file_id):
+	entry, role, error = _member_document(request, workspace_id, file_id)
+	if error:
+		return error
+	if request.method == "GET":
+		versions = entry.versions.select_related("author")[:50]
+		return JsonResponse([
+			{"id": version.id, "author": version.author.get_username() if version.author else "Former user",
+			 "created_at": version.created_at.isoformat()}
+			for version in versions
+		], safe=False)
+	if role == WorkspaceMembership.Role.VIEWER:
+		return _error("Viewer access is read-only.", 403)
+	body = _parse_body(request)
+	content = body.get("content") if body else None
+	if not _valid_content(content):
+		return _error("Version content must be valid JSON under 1 MB.", 400)
+	digest = hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+	version, created = DocumentVersion.objects.get_or_create(
+		document=entry, content_hash=digest,
+		defaults={"author": request.user, "content": content},
+	)
+	return JsonResponse(
+		{"id": version.id, "created_at": version.created_at.isoformat()},
+		status=201 if created else 200,
+	)
+
+
+@require_http_methods(["GET"])
+def document_version(request, workspace_id, file_id, version_id):
+	entry, _, error = _member_document(request, workspace_id, file_id)
+	if error:
+		return error
+	try:
+		version = entry.versions.get(id=version_id)
+	except DocumentVersion.DoesNotExist:
+		return _error("Document version was not found.", 404)
+	return JsonResponse({"id": version.id, "content": version.content})
+
+
+@require_http_methods(["GET", "POST"])
+def notifications(request):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	if request.method == "POST":
+		Notification.objects.filter(user=request.user, read_at__isnull=True).update(read_at=timezone.now())
+		return JsonResponse({})
+	return JsonResponse([
+		{"id": item.id, "kind": item.kind, "message": item.message,
+		 "workspace_id": str(item.workspace_id), "document_id": str(item.document_id) if item.document_id else None,
+		 "created_at": item.created_at.isoformat(), "read": item.read_at is not None}
+		for item in request.user.notifications.select_related("workspace", "document")[:50]
+	], safe=False)
 
 
 @require_http_methods(["GET", "POST"])
