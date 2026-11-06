@@ -217,8 +217,15 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
                   <button
                     key={action}
                     type="button"
-                    disabled={busy || (!editable && ["grammar", "rewrite", "generate"].includes(action))}
-                    onClick={() => void runAction(action, action === "rewrite" ? "Make the writing clearer and more concise." : "")}
+                    disabled={
+                      busy ||
+                      (!editable && ["grammar", "rewrite", "generate"].includes(action)) ||
+                      (["generate", "semantic_search"].includes(action) && !prompt.trim())
+                    }
+                    onClick={() => void runAction(
+                      action,
+                      action === "rewrite" ? "Make the writing clearer and more concise." : prompt.trim()
+                    )}
                   >
                     {actionLabels[action]}
                   </button>
