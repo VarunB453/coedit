@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "./components/editor";
 
 type FileEntry = {
@@ -11,7 +11,12 @@ type FileEntry = {
 };
 
 type WorkspaceInfo = { id: string; name: string; role: "owner" | "editor" | "viewer" };
-type AuthUser = { id: number; username: string };
+type AuthUser = { id: number; username: string; display_name: string; email: string };
+type CommentInfo = { id: number; body: string; author: string; created_at: string; resolved: boolean };
+type VersionInfo = { id: number; author: string; created_at: string };
+type SearchResult = { id: string; name: string; workspace_id: string; workspace_name: string; updated_at: string };
+type NotificationInfo = { id: number; kind: string; message: string; workspace_id: string; document_id: string | null; created_at: string; read: boolean };
+type MemberInfo = { id: number; username: string; role: "owner" | "editor" | "viewer" };
 
 type DialogMode = "create-file" | "create-folder" | "rename";
 
@@ -81,16 +86,56 @@ const App = () => {
   const [inviteName, setInviteName] = useState("");
   const [inviteRole, setInviteRole] = useState<"editor" | "viewer">("editor");
   const [inviteError, setInviteError] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [comments, setComments] = useState<CommentInfo[]>([]);
+  const [commentInput, setCommentInput] = useState("");
+  const [commentError, setCommentError] = useState("");
+  const [versions, setVersions] = useState<VersionInfo[]>([]);
+  const [versionPreview, setVersionPreview] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<NotificationInfo[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [members, setMembers] = useState<MemberInfo[]>([]);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileName, setProfileName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [profileMessage, setProfileMessage] = useState("");
+  const [workspaceNameInput, setWorkspaceNameInput] = useState("");
+  const [shareLink, setShareLink] = useState("");
+  const [shareError, setShareError] = useState("");
+  const [shareRole, setShareRole] = useState<"editor" | "viewer">("editor");
+  const lastSnapshotByDocument = useRef<Record<string, number>>({});
   const selectedEntry = entries.find((entry) => entry.id === selectedId);
   const activeEntry = selectedEntry?.kind === "file" ? selectedEntry : undefined;
   const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const workspaceRole = currentWorkspace?.role;
   const canEdit = workspaceRole === "owner" || workspaceRole === "editor";
   const filesUrl = workspaceId ? `${API_BASE}/api/workspaces/${workspaceId}/files/` : "";
+  const documentUrl = workspaceId && activeEntry
+    ? `${API_BASE}/api/workspaces/${workspaceId}/files/${activeEntry.id}`
+    : "";
+  const unreadNotifications = notifications.filter((notification) => !notification.read).length;
 
   const fileCount = entries.filter((entry) => entry.kind === "file").length;
   const folderCount = entries.filter((entry) => entry.kind === "folder").length;
   const recentDocuments = entries.filter((entry) => entry.kind === "file").slice(0, 4);
+
+  const acceptPendingShare = async () => {
+    const query = new URLSearchParams(window.location.search);
+    const token = query.get("share");
+    if (!token) return null;
+    const response = await apiFetch(`${API_BASE}/api/share/${encodeURIComponent(token)}/accept/`, {
+      method: "POST",
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "This sharing link is invalid or expired.");
+    query.delete("share");
+    query.set("workspace", result.workspace_id);
+    window.history.replaceState(null, "", `${window.location.pathname}?${query}${window.location.hash}`);
+    return result.workspace_id as string;
+  };
 
   useEffect(() => {
     let active = true;
@@ -103,15 +148,26 @@ const App = () => {
       .then(async (sessionUser) => {
         if (!active) return;
         if (sessionUser) {
-          setUser(sessionUser);
+          let sharedWorkspace: string | null = null;
+          try {
+            sharedWorkspace = await acceptPendingShare();
+          } catch (error) {
+            setAuthError(error instanceof Error ? error.message : "Could not accept the sharing link.");
+          }
+          const refreshedUser = await apiFetch(`${API_BASE}/api/auth/profile/`);
+          if (!refreshedUser.ok) throw new Error("Could not load your profile.");
+          const profile = (await refreshedUser.json()) as AuthUser;
+          setUser(profile);
           const response = await apiFetch(`${API_BASE}/api/workspaces/`);
           if (!response.ok) throw new Error("Could not load your workspaces.");
           const loaded = (await response.json()) as WorkspaceInfo[];
           if (!active) return;
           setWorkspaces(loaded);
-          const requested = loaded.find((workspace) => workspace.id === workspaceId);
+          const requested = loaded.find((workspace) => workspace.id === (sharedWorkspace ?? workspaceId));
           const chosen = requested ?? loaded[0];
           setWorkspaceId(chosen?.id ?? null);
+          const noticeResponse = await apiFetch(`${API_BASE}/api/auth/notifications/`);
+          if (noticeResponse.ok) setNotifications((await noticeResponse.json()) as NotificationInfo[]);
         }
       })
       .catch(() => {
@@ -124,6 +180,73 @@ const App = () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!user || searchInput.trim().length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ q: searchInput.trim() });
+        if (workspaceId) params.set("workspace", workspaceId);
+        const response = await apiFetch(`${API_BASE}/api/search/?${params}`);
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? "Search failed.");
+        if (active) setSearchResults(result.results as SearchResult[]);
+      } catch {
+        if (active) setSearchResults([]);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [searchInput, user, workspaceId]);
+
+  useEffect(() => {
+    if (!documentUrl) {
+      setComments([]);
+      setVersions([]);
+      setVersionPreview(null);
+      return;
+    }
+    let active = true;
+    Promise.all([
+      apiFetch(`${documentUrl}/comments/`),
+      apiFetch(`${documentUrl}/history/`),
+    ]).then(async ([commentResponse, historyResponse]) => {
+      if (!commentResponse.ok || !historyResponse.ok) throw new Error("Could not load document activity.");
+      const [loadedComments, loadedVersions] = await Promise.all([
+        commentResponse.json() as Promise<CommentInfo[]>,
+        historyResponse.json() as Promise<VersionInfo[]>,
+      ]);
+      if (active) {
+        setComments(loadedComments);
+        setVersions(loadedVersions);
+      }
+    }).catch(() => {
+      if (active) setCommentError("Could not load document activity.");
+    });
+    return () => { active = false; };
+  }, [documentUrl]);
+
+  useEffect(() => {
+    if (!workspaceId || workspaceRole !== "owner") {
+      setMembers([]);
+      return;
+    }
+    let active = true;
+    apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/members/`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not load workspace members.");
+        return (await response.json()) as MemberInfo[];
+      })
+      .then((loaded) => { if (active) setMembers(loaded); })
+      .catch(() => { if (active) setInviteError("Could not load workspace members."); });
+    return () => { active = false; };
+  }, [workspaceId, workspaceRole]);
 
   useEffect(() => {
     if (!user || !workspaceId) {
@@ -157,6 +280,27 @@ const App = () => {
     (status: "connecting" | "synced" | "offline" | "error") => setSyncStatus(status),
     []
   );
+
+  const saveHistorySnapshot = useCallback((content: Record<string, unknown> | unknown[]) => {
+    if (!documentUrl) return;
+    const now = Date.now();
+    if (now - (lastSnapshotByDocument.current[documentUrl] ?? 0) < 30000) return;
+    lastSnapshotByDocument.current[documentUrl] = now;
+    void apiFetch(`${documentUrl}/history/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }).then(async (response) => {
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.error ?? "Could not save document history.");
+      }
+      const history = await apiFetch(`${documentUrl}/history/`);
+      if (history.ok) setVersions((await history.json()) as VersionInfo[]);
+    }).catch((error: unknown) => {
+      setCommentError(error instanceof Error ? error.message : "Could not save document history.");
+    });
+  }, [documentUrl]);
 
   const childrenByParent = useMemo(() => {
     const grouped = new Map<string | null, FileEntry[]>();
@@ -291,13 +435,16 @@ const App = () => {
       if (!response.ok) throw new Error(result.error ?? "Sign-in failed.");
       setUser(result as AuthUser);
       setPassword("");
+      const sharedWorkspace = await acceptPendingShare();
       const workspaceResponse = await apiFetch(`${API_BASE}/api/workspaces/`);
       if (!workspaceResponse.ok) throw new Error("Could not load your workspaces.");
       const loaded = (await workspaceResponse.json()) as WorkspaceInfo[];
       setWorkspaces(loaded);
       const queryWorkspace = new URLSearchParams(window.location.search).get("workspace");
-      const selected = loaded.find((workspace) => workspace.id === queryWorkspace) ?? loaded[0];
+      const selected = loaded.find((workspace) => workspace.id === (sharedWorkspace ?? queryWorkspace)) ?? loaded[0];
       setWorkspaceId(selected?.id ?? null);
+      const noticeResponse = await apiFetch(`${API_BASE}/api/auth/notifications/`);
+      if (noticeResponse.ok) setNotifications((await noticeResponse.json()) as NotificationInfo[]);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Sign-in failed.");
     }
@@ -336,8 +483,121 @@ const App = () => {
       if (!response.ok) throw new Error(result.error ?? "Could not add member.");
       setInviteName("");
       setInviteError(`Added ${result.username} as ${result.role}.`);
+      const membersResponse = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/members/`);
+      if (membersResponse.ok) setMembers((await membersResponse.json()) as MemberInfo[]);
     } catch (error) {
       setInviteError(error instanceof Error ? error.message : "Could not add member.");
+    }
+  };
+
+  const submitComment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!documentUrl || !commentInput.trim()) return;
+    setCommentError("");
+    try {
+      const response = await apiFetch(`${documentUrl}/comments/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: commentInput }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not post comment.");
+      setComments((current) => [...current, result as CommentInfo]);
+      setCommentInput("");
+    } catch (error) {
+      setCommentError(error instanceof Error ? error.message : "Could not post comment.");
+    }
+  };
+
+  const createShareLink = async () => {
+    if (!workspaceId || workspaceRole !== "owner") return;
+    setShareError("");
+    try {
+      const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/share-links/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: shareRole, expires_in_days: 7 }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not create sharing link.");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("workspace");
+      url.searchParams.set("share", result.token);
+      setShareLink(url.toString());
+      await navigator.clipboard.writeText(url.toString());
+      setLinkCopied(true);
+    } catch (error) {
+      setShareError(error instanceof Error ? error.message : "Could not create sharing link.");
+    }
+  };
+
+  const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setProfileMessage("");
+    try {
+      const payload: Record<string, string> = { display_name: profileName, email: profileEmail };
+      if (newPassword) {
+        payload.current_password = currentPassword;
+        payload.new_password = newPassword;
+      }
+      const response = await apiFetch(`${API_BASE}/api/auth/profile/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not save account settings.");
+      setUser(result as AuthUser);
+      setCurrentPassword("");
+      setNewPassword("");
+      setProfileMessage("Account settings saved.");
+    } catch (error) {
+      setProfileMessage(error instanceof Error ? error.message : "Could not save account settings.");
+    }
+  };
+
+  const renameWorkspace = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!workspaceId || workspaceRole !== "owner") return;
+    try {
+      const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: workspaceNameInput }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not rename workspace.");
+      setWorkspaces((current) => current.map((item) => item.id === workspaceId ? { ...item, name: result.name } : item));
+      setProfileMessage("Workspace settings saved.");
+    } catch (error) {
+      setProfileMessage(error instanceof Error ? error.message : "Could not rename workspace.");
+    }
+  };
+
+  const markNotificationsRead = async () => {
+    const response = await apiFetch(`${API_BASE}/api/auth/notifications/`, { method: "POST" });
+    if (!response.ok) {
+      setLoadError("Could not update notifications.");
+      return;
+    }
+    setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
+  };
+
+  const previewVersion = async (versionId: number) => {
+    if (!documentUrl) return;
+    try {
+      const response = await apiFetch(`${documentUrl}/history/${versionId}/`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not load this version.");
+      const extractText = (node: unknown): string => {
+        if (!node || typeof node !== "object") return "";
+        const value = node as { text?: unknown; content?: unknown };
+        return (typeof value.text === "string" ? value.text : "") +
+          (Array.isArray(value.content) ? value.content.map(extractText).join(" ") : "");
+      };
+      setVersionPreview(extractText(result.content).trim() || "This version has no text content.");
+    } catch (error) {
+      setCommentError(error instanceof Error ? error.message : "Could not load this version.");
     }
   };
 
@@ -347,6 +607,7 @@ const App = () => {
     setWorkspaces([]);
     setWorkspaceId(null);
     setEntries([]);
+    setNotifications([]);
   };
 
   const selectWorkspace = (id: string) => {
@@ -493,33 +754,67 @@ const App = () => {
                     : "Connecting…"}
             </span>
           </span>
-          <span className="topbar-user">{user.username}</span>
+          <span className="topbar-user">{user.display_name || user.username}</span>
+          <button
+            type="button"
+            className="soft-button subtle-button"
+            onClick={() => setShowNotifications((current) => !current)}
+            aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ""}`}
+          >
+            Notifications{unreadNotifications ? ` (${unreadNotifications})` : ""}
+          </button>
+          <button
+            type="button"
+            className="soft-button subtle-button"
+            onClick={() => {
+              setProfileName(user.display_name || user.username);
+              setProfileEmail(user.email || "");
+              setWorkspaceNameInput(currentWorkspace?.name ?? "");
+              setProfileMessage("");
+              setProfileOpen(true);
+            }}
+          >
+            Account settings
+          </button>
           <button type="button" onClick={createWorkspace} className="soft-button subtle-button">
             New workspace
           </button>
           <button type="button" onClick={signOut} className="soft-button subtle-button">
             Sign out
           </button>
-          <button
-            type="button"
-            disabled={!workspaceId}
-            onClick={() => {
-              const shareUrl = new URL(window.location.href);
-              if (workspaceId) shareUrl.searchParams.set("workspace", workspaceId);
-              navigator.clipboard
-                .writeText(shareUrl.toString())
-                .then(() => setLinkCopied(true))
-                .catch(() => setLinkCopied(false));
-            }}
-            className="soft-button primary-soft-button"
-          >
-            {linkCopied ? "Link copied" : "Share workspace"}
-          </button>
+          {workspaceRole === "owner" && (
+            <button type="button" disabled={!workspaceId} onClick={createShareLink} className="soft-button primary-soft-button">
+              {linkCopied ? "Invite link copied" : "Create invite link"}
+            </button>
+          )}
         </div>
       </header>
 
       <div className="app-layout">
         <aside className="sidebar-panel">
+          {showNotifications && (
+            <section className="activity-card">
+              <div className="section-heading-row">
+                <h2>Notifications</h2>
+                <button type="button" className="inline-link" onClick={markNotificationsRead}>Mark all read</button>
+              </div>
+              {notifications.length ? notifications.slice(0, 8).map((notification) => (
+                <button
+                  type="button"
+                  key={notification.id}
+                  className={`activity-row ${notification.read ? "" : "activity-unread"}`}
+                  onClick={() => {
+                    selectWorkspace(notification.workspace_id);
+                    if (notification.document_id) setSelectedId(notification.document_id);
+                    setShowNotifications(false);
+                  }}
+                >
+                  <span>{notification.message}</span>
+                  <small>{new Date(notification.created_at).toLocaleDateString()}</small>
+                </button>
+              )) : <p className="empty-state-inline">You’re all caught up.</p>}
+            </section>
+          )}
           <div className="sidebar-header">
             <div>
               <p className="eyebrow">Workspace</p>
@@ -533,6 +828,37 @@ const App = () => {
                 + Folder
               </button>
             </div>
+          </div>
+
+          <div className="search-box">
+            <label htmlFor="document-search" className="sr-only">Search documents</label>
+            <input
+              id="document-search"
+              type="search"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Search documents…"
+              className="text-input compact-input"
+            />
+            {searchInput.trim().length >= 2 && (
+              <div className="search-results">
+                {searchResults.length ? searchResults.map((result) => (
+                  <button
+                    type="button"
+                    key={result.id}
+                    className="search-result"
+                    onClick={() => {
+                      if (result.workspace_id !== workspaceId) selectWorkspace(result.workspace_id);
+                      setSelectedId(result.id);
+                      setSearchInput("");
+                    }}
+                  >
+                    <strong>{result.name}</strong>
+                    <small>{result.workspace_name}</small>
+                  </button>
+                )) : <p className="empty-state-inline">No matching documents.</p>}
+              </div>
+            )}
           </div>
 
           <div className="sidebar-metrics">
@@ -583,6 +909,27 @@ const App = () => {
                 </button>
               </div>
               {inviteError && <p role="status" className="invite-status">{inviteError}</p>}
+              <div className="member-list">
+                {members.filter((member) => member.role !== "owner").map((member) => (
+                  <div key={member.id} className="member-row">
+                    <span>{member.username}<small>{member.role}</small></span>
+                    <button
+                      type="button"
+                      className="inline-link danger-text"
+                      onClick={async () => {
+                        const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/members/${member.id}/`, { method: "DELETE" });
+                        if (!response.ok) {
+                          setInviteError("Could not remove this workspace member.");
+                          return;
+                        }
+                        setMembers((current) => current.filter((item) => item.id !== member.id));
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
             </form>
           )}
         </aside>
@@ -632,7 +979,53 @@ const App = () => {
                   initialContent={activeEntry.content}
                   editable={canEdit}
                   onSyncStatusChange={handleSyncStatusChange}
+                  onDocumentChange={saveHistorySnapshot}
                 />
+                <section className="document-activity card-surface">
+                  <div className="section-heading-row">
+                    <div>
+                      <p className="eyebrow">Collaboration</p>
+                      <h2>Comments &amp; history</h2>
+                    </div>
+                  </div>
+                  <form onSubmit={submitComment} className="comment-form">
+                    <label htmlFor="new-comment" className="sr-only">Add a comment</label>
+                    <textarea
+                      id="new-comment"
+                      value={commentInput}
+                      onChange={(event) => setCommentInput(event.target.value)}
+                      placeholder="Share feedback with your team…"
+                      maxLength={4000}
+                      className="text-input comment-input"
+                    />
+                    <button type="submit" className="primary-btn" disabled={!commentInput.trim()}>Comment</button>
+                  </form>
+                  {commentError && <p role="alert" className="auth-error">{commentError}</p>}
+                  <div className="comment-list">
+                    {comments.map((comment) => (
+                      <article key={comment.id} className="comment-item">
+                        <div className="section-heading-row">
+                          <strong>{comment.author}</strong>
+                          <small>{new Date(comment.created_at).toLocaleString()}</small>
+                        </div>
+                        <p>{comment.body}</p>
+                      </article>
+                    ))}
+                    {!comments.length && <p className="empty-state-inline">No comments yet.</p>}
+                  </div>
+                  <div className="history-list">
+                    <h3>Document history</h3>
+                    {versions.length ? versions.map((version) => (
+                      <button type="button" key={version.id} className="history-row" onClick={() => previewVersion(version.id)}>
+                        <span>{version.author}</span>
+                        <small>{new Date(version.created_at).toLocaleString()}</small>
+                      </button>
+                    )) : <p className="empty-state-inline">History snapshots are saved as you edit.</p>}
+                    {versionPreview !== null && (
+                      <pre className="version-preview">{versionPreview}</pre>
+                    )}
+                  </div>
+                </section>
               </div>
             </>
           ) : selectedEntry?.kind === "folder" ? (
