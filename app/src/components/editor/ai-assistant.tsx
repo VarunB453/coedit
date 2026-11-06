@@ -78,7 +78,7 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
   const runAction = async (action: Action, instruction = prompt.trim()) => {
     if (!providerId || busy) return;
     const context = view.state.doc.textBetween(0, view.state.doc.content.size, "\n\n");
-    const snapshot = context;
+    const snapshot = JSON.stringify(view.state.doc.toJSON());
     const nextHistory = action === "chat" ? history.slice(-10) : [];
     setBusy(true);
     setError("");
@@ -164,8 +164,7 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
   };
 
   const applySuggestion = () => {
-    const currentText = view.state.doc.textBetween(0, view.state.doc.content.size, "\n\n");
-    if (currentText !== sourceSnapshot) {
+    if (JSON.stringify(view.state.doc.toJSON()) !== sourceSnapshot) {
       setStale(true);
       return;
     }
