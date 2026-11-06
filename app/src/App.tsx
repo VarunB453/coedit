@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Editor from "./components/editor";
 
 type FileEntry = {
@@ -76,15 +76,11 @@ const App = () => {
   const [dialogError, setDialogError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
-  const [draft, setDraft] = useState<Record<string, unknown> | unknown[]>([]);
-  const [dirty, setDirty] = useState(false);
-  const [saveAttempt, setSaveAttempt] = useState(0);
+  const [syncStatus, setSyncStatus] = useState<"connecting" | "synced" | "offline" | "error">("connecting");
   const [linkCopied, setLinkCopied] = useState(false);
   const [inviteName, setInviteName] = useState("");
   const [inviteRole, setInviteRole] = useState<"editor" | "viewer">("editor");
   const [inviteError, setInviteError] = useState("");
-  const selectedRef = useRef<string | null>(null);
   const selectedEntry = entries.find((entry) => entry.id === selectedId);
   const activeEntry = selectedEntry?.kind === "file" ? selectedEntry : undefined;
   const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
@@ -157,40 +153,10 @@ const App = () => {
     return () => { active = false; };
   }, [filesUrl, user, workspaceId]);
 
-  useEffect(() => {
-    selectedRef.current = selectedId;
-    const selected = entries.find((entry) => entry.id === selectedId && entry.kind === "file");
-    setDraft(selected?.content ?? []);
-    setDirty(false);
-    setSaveState("saved");
-  }, [selectedId, entries]);
-
-  useEffect(() => {
-    if (!activeEntry || !dirty || !canEdit) return;
-    const entryId = activeEntry.id;
-    const content = draft;
-    const timer = window.setTimeout(async () => {
-      setSaveState("saving");
-      try {
-        const response = await apiFetch(`${filesUrl}${entryId}/`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
-        });
-        if (!response.ok) throw new Error("Save failed");
-        if (selectedRef.current === entryId) {
-          setEntries((current) =>
-            current.map((entry) => (entry.id === entryId ? { ...entry, content } : entry))
-          );
-          setDirty(false);
-          setSaveState("saved");
-        }
-      } catch {
-        if (selectedRef.current === entryId) setSaveState("error");
-      }
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [activeEntry, canEdit, dirty, draft, filesUrl, saveAttempt]);
+  const handleSyncStatusChange = useCallback(
+    (status: "connecting" | "synced" | "offline" | "error") => setSyncStatus(status),
+    []
+  );
 
   const childrenByParent = useMemo(() => {
     const grouped = new Map<string | null, FileEntry[]>();
@@ -516,15 +482,16 @@ const App = () => {
         </div>
 
         <div className="topbar-actions">
-          <span className="save-status-badge">
-            <span className={saveState === "error" ? "status-text-danger" : "status-text-muted"}>
-              {saveState === "saving" ? "Saving" : saveState === "error" ? "Save failed" : "Saved"}
+          <span className="save-status-badge" role="status" aria-live="polite">
+            <span className={syncStatus === "error" ? "status-text-danger" : "status-text-muted"}>
+              {syncStatus === "synced"
+                ? "Live and saved"
+                : syncStatus === "offline"
+                  ? "Offline · saved on this device"
+                  : syncStatus === "error"
+                    ? "Local storage unavailable"
+                    : "Connecting…"}
             </span>
-            {saveState === "error" && (
-              <button type="button" onClick={() => setSaveAttempt((attempt) => attempt + 1)} className="inline-link">
-                Retry
-              </button>
-            )}
           </span>
           <span className="topbar-user">{user.username}</span>
           <button type="button" onClick={createWorkspace} className="soft-button subtle-button">
@@ -658,14 +625,12 @@ const App = () => {
                 <Editor
                   key={activeEntry.id}
                   username={user.username}
+                  userId={user.id}
                   fileId={activeEntry.id}
                   workspaceId={workspaceId!}
                   initialContent={activeEntry.content}
                   editable={canEdit}
-                  onContentChange={(content) => {
-                    setDraft(content);
-                    setDirty(true);
-                  }}
+                  onSyncStatusChange={handleSyncStatusChange}
                 />
               </div>
             </>

@@ -1,5 +1,3 @@
-import { randomInt } from "remirror";
-
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import "remirror/styles/all.css";
@@ -7,6 +5,7 @@ import "remirror/styles/all.css";
 import * as Y from "yjs";
 
 import { WebsocketProvider } from "y-websocket";
+import { IndexeddbPersistence } from "y-indexeddb";
 
 import { InvalidContentHandler } from "remirror";
 import {
@@ -36,14 +35,21 @@ import {
 
 export interface Props {
   username: string;
+  userId: number;
   fileId: string;
   workspaceId: string;
   initialContent: Record<string, unknown> | unknown[];
-  onContentChange: (content: any) => void;
+  onSyncStatusChange?: (status: SyncStatus) => void;
   editable?: boolean;
 }
 
-type EditorSurfaceProps = Props & { provider: WebsocketProvider; seedContent: boolean };
+type SyncStatus = "connecting" | "synced" | "offline" | "error";
+type EditorSurfaceProps = Props & {
+  provider: WebsocketProvider;
+  seedContent: boolean;
+  presence: PresenceUser[];
+};
+type PresenceUser = { id: number; name: string; color: string };
 
 const colors = [
   "#CC444B",
@@ -57,13 +63,15 @@ const colors = [
   "#FFC857",
 ];
 
+const userColor = (userId: number) => colors[userId % colors.length];
+
 const EditorSurface: React.FC<EditorSurfaceProps> = ({
   username,
   initialContent,
-  onContentChange,
   editable = true,
   provider,
   seedContent,
+  presence,
 }) => {
   const onError: InvalidContentHandler = useCallback(
     ({ json, invalidContent, transformers }: any) => {
@@ -92,6 +100,13 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
       }),
       new YjsExtension({
         getProvider: () => provider,
+        cursorBuilder: (user) => {
+          const cursor = document.createElement("span");
+          cursor.className = "collaboration-cursor";
+          cursor.style.borderColor = typeof user.color === "string" ? user.color : "#1b5e52";
+          cursor.textContent = typeof user.name === "string" ? user.name : "Collaborator";
+          return cursor;
+        },
       }),
     ],
     content: seedContent ? (initialContent as any) : undefined,
@@ -108,6 +123,26 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
             Live sync
           </span>
           <span className="editor-toolbar-caption">{editable ? "Editing enabled" : "Read only"}</span>
+          <div className="collaborator-presence" aria-label="People in this document">
+            {presence.slice(0, 3).map((user) => (
+              <span
+                key={user.id}
+                className="collaborator-avatar"
+                title={user.name}
+                style={{ backgroundColor: user.color }}
+              >
+                {user.name.slice(0, 1).toUpperCase()}
+              </span>
+            ))}
+            {presence.length > 3 && (
+              <span className="collaborator-overflow" title={presence.slice(3).map((user) => user.name).join(", ")}>
+                +{presence.length - 3}
+              </span>
+            )}
+            <span className="sr-only" aria-live="polite">
+              {presence.length} {presence.length === 1 ? "person" : "people"} in this document
+            </span>
+          </div>
         </div>
 
         <Remirror
@@ -125,7 +160,6 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
             <OnChangeJSON
               onChange={(json) => {
                 onChange(json as any);
-                onContentChange(json);
               }}
             />
           </div>
@@ -142,24 +176,97 @@ const apiBase =
     : window.location.origin);
 
 const Editor: React.FC<Props> = (props) => {
-  const { fileId, workspaceId, editable = true } = props;
+  const { fileId, userId, workspaceId, editable = true, onSyncStatusChange } = props;
   const ydoc = useMemo(() => new Y.Doc(), [fileId]);
+  const persistence = useMemo(
+    () => new IndexeddbPersistence(`coedit:${userId}:${fileId}`, ydoc),
+    [fileId, userId, ydoc]
+  );
   const provider = useMemo(() => {
     const websocketBase = apiBase.replace(/^http/, "ws").replace(/\/$/, "");
-    return new WebsocketProvider(`${websocketBase}/ws/editor/${fileId}`, fileId, ydoc);
+    return new WebsocketProvider(`${websocketBase}/ws/editor/${fileId}`, fileId, ydoc, {
+      connect: false,
+      maxBackoffTime: 10000,
+    });
   }, [fileId, ydoc]);
   const [seedContent, setSeedContent] = useState<boolean | null>(null);
+  const [presence, setPresence] = useState<PresenceUser[]>([]);
 
   useEffect(() => {
     provider.awareness.setLocalStateField("user", {
+      id: userId,
       name: props.username,
-      color: colors[randomInt(0, colors.length - 1)],
+      color: userColor(userId),
+    });
+    const updatePresence = () => {
+      const users = new Map<number, PresenceUser>();
+      for (const state of provider.awareness.getStates().values()) {
+        const user = state.user;
+        if (
+          user &&
+          typeof user.id === "number" &&
+          typeof user.name === "string" &&
+          typeof user.color === "string"
+        ) {
+          users.set(user.id, { id: user.id, name: user.name, color: user.color });
+        }
+      }
+      setPresence(Array.from(users.values()));
+    };
+    provider.awareness.on("change", updatePresence);
+    updatePresence();
+    return () => {
+      provider.awareness.off("change", updatePresence);
+      provider.destroy();
+      void persistence.destroy().finally(() => ydoc.destroy());
+    };
+  }, [persistence, provider, props.username, userId, ydoc]);
+
+  useEffect(() => {
+    let active = true;
+    const connect = () => {
+      if (active) provider.connect();
+    };
+    void persistence.whenSynced.then(connect).catch((error: unknown) => {
+      console.error("Could not restore local document data.", error);
+      if (active) onSyncStatusChange?.("error");
     });
     return () => {
-      provider.destroy();
-      ydoc.destroy();
+      active = false;
     };
-  }, [provider, props.username, ydoc]);
+  }, [onSyncStatusChange, persistence, provider]);
+
+  useEffect(() => {
+    const updatePresence = () => {
+      const users = new Map<number, PresenceUser>();
+      for (const state of provider.awareness.getStates().values()) {
+        const user = state.user;
+        if (
+          user &&
+          typeof user.id === "number" &&
+          typeof user.name === "string" &&
+          typeof user.color === "string"
+        ) {
+          users.set(user.id, { id: user.id, name: user.name, color: user.color });
+        }
+      }
+      setPresence(Array.from(users.values()));
+    };
+    const onStatus = ({ status }: { status: string }) => {
+      onSyncStatusChange?.(status === "connected" ? "connecting" : "offline");
+    };
+    const onSync = (synced: boolean) => {
+      onSyncStatusChange?.(synced ? "synced" : "connecting");
+    };
+    provider.awareness.on("change", updatePresence);
+    provider.on("status", onStatus);
+    provider.on("sync", onSync);
+    return () => {
+      provider.awareness.off("change", updatePresence);
+      provider.off("status", onStatus);
+      provider.off("sync", onSync);
+    };
+  }, [onSyncStatusChange, provider]);
 
   useEffect(() => {
     let active = true;
@@ -188,15 +295,17 @@ const Editor: React.FC<Props> = (props) => {
         if (!active) return;
         if (result.ready) {
           complete = true;
-          setSeedContent(Boolean(result.initialize));
+          setSeedContent(Boolean(result.initialize) && ydoc.share.size === 0);
         } else {
           retryTimer = window.setTimeout(
             requestInitialization,
             Math.min(Math.max(1, result.retry_after ?? 2), 2) * 1000
           );
         }
-      } catch {
+      } catch (error) {
+        console.error("Could not initialize document sync.", error);
         if (active) {
+          setSeedContent((current) => current ?? (ydoc.share.size === 0));
           retryTimer = window.setTimeout(requestInitialization, 2000);
         }
       } finally {
@@ -207,20 +316,39 @@ const Editor: React.FC<Props> = (props) => {
     const onSync = (synced: boolean) => {
       if (synced) void requestInitialization();
     };
+    const onOffline = () => {
+      setSeedContent((current) => current ?? (ydoc.share.size === 0));
+      onSyncStatusChange?.("offline");
+    };
+    const onOnline = () => {
+      onSyncStatusChange?.("connecting");
+      if (provider.synced) void requestInitialization();
+    };
     provider.on("sync", onSync);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
     if (provider.synced) void requestInitialization();
     return () => {
       active = false;
       window.clearTimeout(retryTimer);
       provider.off("sync", onSync);
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
     };
-  }, [editable, fileId, provider, workspaceId]);
+  }, [editable, fileId, onSyncStatusChange, provider, workspaceId, ydoc]);
 
   if (seedContent === null) {
     return <p className="editor-loading">Waiting for document sync…</p>;
   }
 
-  return <EditorSurface {...props} provider={provider} seedContent={seedContent} />;
+  return (
+    <EditorSurface
+      {...props}
+      provider={provider}
+      seedContent={seedContent}
+      presence={presence}
+    />
+  );
 };
 
 export default Editor;
