@@ -48,14 +48,6 @@ class WorkspaceFileApiTests(TestCase):
         self.assertEqual(registered.status_code, 201)
         self.assertEqual(client.get("/api/auth/session/").json()["username"], "new-member")
 
-    def test_login_rejects_non_string_credentials(self):
-        response = self.client.post(
-            "/api/auth/session/",
-            data={"username": [], "password": {}},
-            content_type="application/json",
-        )
-        self.assertEqual(response.status_code, 401)
-
         csrf = client.get("/api/csrf/").json()["csrfToken"]
         logged_out = client.post("/api/auth/logout/", HTTP_X_CSRFTOKEN=csrf)
         self.assertEqual(logged_out.status_code, 200)
@@ -70,6 +62,14 @@ class WorkspaceFileApiTests(TestCase):
         )
         self.assertEqual(logged_in.status_code, 200)
         self.assertEqual(client.get("/api/auth/session/").json()["username"], "new-member")
+
+    def test_login_rejects_non_string_credentials(self):
+        response = self.client.post(
+            "/api/auth/session/",
+            data={"username": [], "password": {}},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 401)
 
     def test_create_list_and_reject_duplicate_sibling_names(self):
         created = self.create_entry("notes.txt")
