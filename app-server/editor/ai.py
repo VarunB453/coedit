@@ -134,6 +134,8 @@ def stream_completion(provider, messages):
 						text = part.get("text")
 						if isinstance(text, str) and text:
 							yield text
+	except (HTTPError, URLError, TimeoutError, OSError):
+		raise RuntimeError("The configured AI provider stream was interrupted.") from None
 	finally:
 		response.close()
 

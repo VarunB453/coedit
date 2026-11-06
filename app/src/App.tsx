@@ -1,5 +1,6 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Editor from "./components/editor";
+import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+const Editor = lazy(() => import("./components/editor"));
 
 type FileEntry = {
   id: string;
@@ -1100,18 +1101,20 @@ const App = () => {
               </div>
 
               <div className="editor-scroll-region">
-                <Editor
-                  key={activeEntry.id}
-                  username={user.display_name || user.username}
-                  userId={user.id}
-                  fileId={activeEntry.id}
-                  documentName={activeEntry.name}
-                  workspaceId={workspaceId!}
-                  initialContent={activeEntry.content}
-                  editable={canEdit}
-                  onSyncStatusChange={handleSyncStatusChange}
-                  onDocumentChange={saveHistorySnapshot}
-                />
+                <Suspense fallback={<p className="editor-loading">Loading editor…</p>}>
+                  <Editor
+                    key={activeEntry.id}
+                    username={user.display_name || user.username}
+                    userId={user.id}
+                    fileId={activeEntry.id}
+                    documentName={activeEntry.name}
+                    workspaceId={workspaceId!}
+                    initialContent={activeEntry.content}
+                    editable={canEdit}
+                    onSyncStatusChange={handleSyncStatusChange}
+                    onDocumentChange={saveHistorySnapshot}
+                  />
+                </Suspense>
                 <section className="document-activity card-surface">
                   <div className="section-heading-row">
                     <div>

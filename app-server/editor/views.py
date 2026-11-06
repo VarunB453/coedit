@@ -1,5 +1,6 @@
 import json
 import hashlib
+import logging
 import re
 import secrets
 import uuid
@@ -30,6 +31,7 @@ from .ai import ACTION_INSTRUCTIONS, PROVIDERS, available_providers, build_messa
 MAX_NAME_LENGTH = 100
 MAX_CONTENT_BYTES = 1_000_000
 MAX_COMMENT_LENGTH = 4000
+logger = logging.getLogger(__name__)
 
 
 def _error(message, status):
@@ -116,6 +118,7 @@ def ai_completion(request, workspace_id, file_id):
 				yield f"data: {json.dumps({'text': text}, ensure_ascii=False)}\n\n"
 			yield "data: {\"done\":true}\n\n"
 		except RuntimeError as error:
+			logger.warning("AI provider stream failed: %s", error)
 			yield f"event: error\ndata: {json.dumps({'error': str(error)})}\n\n"
 
 	response = StreamingHttpResponse(events(), content_type="text/event-stream; charset=utf-8")
@@ -138,7 +141,11 @@ def auth_session(request):
 	body = _parse_body(request)
 	if body is None:
 		return _error("Request body must be a JSON object.", 400)
-	user = authenticate(request, username=body.get("username", ""), password=body.get("password", ""))
+	username = body.get("username", "")
+	password = body.get("password", "")
+	if not isinstance(username, str) or not isinstance(password, str):
+		return _error("Username or password is incorrect.", 401)
+	user = authenticate(request, username=username, password=password)
 	if user is None:
 		return _error("Username or password is incorrect.", 401)
 	login(request, user)
@@ -172,19 +179,24 @@ def auth_profile(request):
 	allowed = {"display_name", "email", "current_password", "new_password"}
 	if set(body) - allowed:
 		return _error("Profile fields are invalid.", 400)
-	display_name = body.get("display_name", "")
-	email = body.get("email", "")
-	if not isinstance(display_name, str) or len(display_name.strip()) > 100:
+	display_name = body.get("display_name")
+	email = body.get("email")
+	if display_name is not None and (
+		not isinstance(display_name, str) or len(display_name.strip()) > 100
+	):
 		return _error("Display name must be 100 characters or fewer.", 400)
-	if not isinstance(email, str) or len(email.strip()) > 254:
+	if email is not None and (not isinstance(email, str) or len(email.strip()) > 254):
 		return _error("Email must be 254 characters or fewer.", 400)
-	try:
-		validate_email(email.strip())
-	except ValidationError:
-		if email.strip():
-			return _error("Enter a valid email address.", 400)
+	if email is not None:
+		try:
+			validate_email(email.strip())
+		except ValidationError:
+			if email.strip():
+				return _error("Enter a valid email address.", 400)
 	new_password = body.get("new_password")
 	if new_password is not None:
+		if not isinstance(new_password, str):
+			return _error("New password must be a string.", 400)
 		if not isinstance(body.get("current_password"), str) or not request.user.check_password(body["current_password"]):
 			return _error("Current password is incorrect.", 400)
 		try:
@@ -192,11 +204,18 @@ def auth_profile(request):
 		except ValidationError as error:
 			return _error(" ".join(error.messages), 400)
 		request.user.set_password(new_password)
-	request.user.email = email.strip()
-	request.user.save(update_fields=["email", "password"] if new_password is not None else ["email"])
-	profile, _ = UserProfile.objects.get_or_create(user=request.user)
-	profile.display_name = display_name.strip()
-	profile.save(update_fields=["display_name"])
+	user_update_fields = []
+	if email is not None:
+		request.user.email = email.strip()
+		user_update_fields.append("email")
+	if new_password is not None:
+		user_update_fields.append("password")
+	if user_update_fields:
+		request.user.save(update_fields=user_update_fields)
+	if display_name is not None:
+		profile, _ = UserProfile.objects.get_or_create(user=request.user)
+		profile.display_name = display_name.strip()
+		profile.save(update_fields=["display_name"])
 	if new_password is not None:
 		update_session_auth_hash(request, request.user)
 	return JsonResponse(_user_payload(request.user))

@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from editor.models import (
     DocumentUpdate, FileEntry, Notification, Workspace, WorkspaceMembership,
-    WorkspaceShareLink,
+    WorkspaceShareLink, UserProfile,
 )
 from editor.ai import build_messages
 from editor.socket.consumers import MAX_WEBSOCKET_MESSAGE_BYTES, EditorConsumer
@@ -47,6 +47,14 @@ class WorkspaceFileApiTests(TestCase):
         )
         self.assertEqual(registered.status_code, 201)
         self.assertEqual(client.get("/api/auth/session/").json()["username"], "new-member")
+
+    def test_login_rejects_non_string_credentials(self):
+        response = self.client.post(
+            "/api/auth/session/",
+            data={"username": [], "password": {}},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 401)
 
         csrf = client.get("/api/csrf/").json()["csrfToken"]
         logged_out = client.post("/api/auth/logout/", HTTP_X_CSRFTOKEN=csrf)
@@ -261,6 +269,34 @@ class SaaSFeatureApiTests(TestCase):
         self.assertTrue(
             get_user_model().objects.get(id=self.owner.id).check_password("An0ther!Long-passphrase-123")
         )
+
+    def test_password_only_profile_patch_preserves_existing_profile_fields(self):
+        self.owner.email = "lead@example.com"
+        self.owner.save(update_fields=["email"])
+        profile, _ = UserProfile.objects.get_or_create(user=self.owner)
+        profile.display_name = "Project Lead"
+        profile.save(update_fields=["display_name"])
+
+        response = self.client.patch(
+            "/api/auth/profile/",
+            data={
+                "current_password": "C0llab!Long-passphrase-9",
+                "new_password": "An0ther!Long-passphrase-123",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["display_name"], "Project Lead")
+        self.assertEqual(response.json()["email"], "lead@example.com")
+
+    def test_profile_rejects_non_string_new_password(self):
+        response = self.client.patch(
+            "/api/auth/profile/",
+            data={"current_password": "C0llab!Long-passphrase-9", "new_password": []},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
 
     def test_share_link_joins_with_limited_role_and_can_be_revoked(self):
         url = f"/api/workspaces/{self.workspace.id}/share-links/"

@@ -81,13 +81,13 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
   onDocumentChange,
 }) => {
   const onError: InvalidContentHandler = useCallback(
-    ({ json, invalidContent, transformers }: any) => {
+    ({ json, invalidContent, transformers }) => {
       return transformers.remove(json, invalidContent);
     },
     []
   );
 
-  const { manager, state, onChange } = useRemirror({
+  const { manager, state } = useRemirror({
     extensions: () => [
       new BoldExtension(),
       new ItalicExtension(),
@@ -174,7 +174,6 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
             <EditorComponent />
             <OnChangeJSON
               onChange={(json) => {
-                onChange(json as any);
                 onDocumentChange?.(json);
               }}
             />

@@ -85,6 +85,7 @@ class DocumentUpdate(models.Model):
 
 	class Meta:
 		ordering = ("id",)
+		indexes = [models.Index(fields=("document", "id"), name="doc_update_replay_idx")]
 		constraints = [
 			models.UniqueConstraint(fields=("document", "update_hash"), name="uniq_document_yjs_update")
 		]
@@ -125,6 +126,7 @@ class DocumentComment(models.Model):
 
 	class Meta:
 		ordering = ("created_at",)
+		indexes = [models.Index(fields=("document", "created_at"), name="comment_doc_time_idx")]
 
 
 class DocumentVersion(models.Model):
@@ -136,6 +138,7 @@ class DocumentVersion(models.Model):
 
 	class Meta:
 		ordering = ("-created_at", "-id")
+		indexes = [models.Index(fields=("document", "-created_at"), name="version_doc_time_idx")]
 		constraints = [
 			models.UniqueConstraint(fields=("document", "content_hash"), name="uniq_document_version_hash")
 		]
@@ -152,3 +155,6 @@ class Notification(models.Model):
 
 	class Meta:
 		ordering = ("-created_at", "-id")
+		indexes = [
+			models.Index(fields=("user", "read_at", "-created_at"), name="notif_user_read_time_idx")
+		]
