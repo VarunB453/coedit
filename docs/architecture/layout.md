@@ -14,6 +14,6 @@ The remaining feature, shared-package, infrastructure, and test directories are 
 
 The frontend feature areas are reserved for auth, documents, collaboration, comments, and AI assistant code. The backend module areas are reserved for domain-oriented Django modules; the existing `editor` app remains authoritative until a module is migrated with its models, migrations, routes, and tests together.
 
-Deployment manifests, browser/integration/performance tests, shared packages, and proxy/container configuration are not yet implemented.
+Production deployment manifests, browser/integration/performance tests, shared packages, and production proxy configuration are not yet implemented.
 
 The Dockerfiles and Compose file provide a local development stack only; they are not production deployment assets. A `LICENSE` file is intentionally omitted until the repository owner selects a license.

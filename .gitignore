@@ -6,6 +6,7 @@
 venv/
 .env
 .env.*
+!.env.example
 
 # Django and test artifacts
 staticfiles/
