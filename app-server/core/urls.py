@@ -24,6 +24,8 @@ urlpatterns = [
     path('api/auth/session/', editor_views.auth_session),
     path('api/auth/register/', editor_views.register),
     path('api/auth/logout/', editor_views.end_session),
+    path('api/ai/providers/', editor_views.ai_providers),
+    path('api/workspaces/<uuid:workspace_id>/files/<uuid:file_id>/ai/', editor_views.ai_completion),
     path('api/workspaces/', editor_views.workspaces),
     path('api/workspaces/<uuid:workspace_id>/members/', editor_views.workspace_members),
     path('api/workspaces/<uuid:workspace_id>/members/<int:user_id>/', editor_views.workspace_member),
