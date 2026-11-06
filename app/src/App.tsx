@@ -153,7 +153,7 @@ const App = () => {
           try {
             sharedWorkspace = await acceptPendingShare();
           } catch (error) {
-            setAuthError(error instanceof Error ? error.message : "Could not accept the sharing link.");
+            setLoadError(error instanceof Error ? error.message : "Could not accept the sharing link.");
           }
           const refreshedUser = await apiFetch(`${API_BASE}/api/auth/profile/`);
           if (!refreshedUser.ok) throw new Error("Could not load your profile.");
@@ -438,7 +438,12 @@ const App = () => {
       if (!response.ok) throw new Error(result.error ?? "Sign-in failed.");
       setUser(result as AuthUser);
       setPassword("");
-      const sharedWorkspace = await acceptPendingShare();
+      let sharedWorkspace: string | null = null;
+      try {
+        sharedWorkspace = await acceptPendingShare();
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : "Could not accept the sharing link.");
+      }
       const workspaceResponse = await apiFetch(`${API_BASE}/api/workspaces/`);
       if (!workspaceResponse.ok) throw new Error("Could not load your workspaces.");
       const loaded = (await workspaceResponse.json()) as WorkspaceInfo[];
