@@ -138,7 +138,7 @@ const App = () => {
     query.set("workspace", result.workspace_id);
     hashParams.delete("share");
     const hash = tokenFromHash
-      ? hashParams.size ? `#${hashParams}` : ""
+      ? hashParams.toString() ? `#${hashParams}` : ""
       : window.location.hash;
     window.history.replaceState(null, "", `${window.location.pathname}?${query}${hash}`);
     return result.workspace_id as string;
