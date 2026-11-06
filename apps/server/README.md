@@ -1,5 +1,7 @@
 # CoEdit AI
 
+The Django/Channels backend lives in `apps/server`; its Django project and application packages are under `src/`. From the repository root, install the Python dependencies with `pip install -r apps/server/requirements.txt`, then run management commands from the server directory, for example `cd apps/server && python manage.py check`.
+
 The editor's AI assistant sends the active document text to an authenticated Django endpoint and streams generated text back with server-sent events. It supports contextual chat, summaries, grammar correction, rewriting, generation, document insights, semantic search within the active document, and natural-language editing instructions. Generated edits are previews; the user must apply them, and application is blocked if the document changed while the suggestion was being generated.
 
 Provider credentials are configured only in the server environment. The browser receives provider names and model labels, never API keys.
@@ -26,7 +28,7 @@ The application requires a production `SECRET_KEY`; `DEBUG` defaults to `false`.
 
 For a single-process local development setup, SQLite is used by default. For production, install `psycopg` and set `DATABASE_ENGINE=postgresql`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, and optionally `POSTGRES_PORT` and `DATABASE_CONN_MAX_AGE`. Persistent connections default to disabled for ASGI workers; use a managed pooler before increasing the connection age. SQLite is not appropriate for multiple application workers or replicas.
 
-The Channels layer uses `REDIS_URL` (default `redis://127.0.0.1:6379/0`). Production workers must share a durable Redis service. Serve the ASGI application (for example, `daphne core.asgi:application`) behind an HTTPS-terminating reverse proxy that overwrites `X-Forwarded-Proto`, run `python manage.py migrate` and `python manage.py collectstatic`, and serve the frontend's production build. Do not expose Django directly when relying on the forwarded-protocol header. Configure `VITE_API_URL` at frontend build time when the API is hosted on another origin. Application logs go to standard output; `LOG_LEVEL` controls their minimum level.
+The Channels layer uses `REDIS_URL` (default `redis://127.0.0.1:6379/0`). Production workers must share a durable Redis service. From `apps/server`, serve the ASGI application with `PYTHONPATH=src daphne core.asgi:application` behind an HTTPS-terminating reverse proxy that overwrites `X-Forwarded-Proto`, run `python manage.py migrate` and `python manage.py collectstatic`, and serve the frontend's production build from `apps/web`. Do not expose Django directly when relying on the forwarded-protocol header. Configure `VITE_API_URL` at frontend build time when the API is hosted on another origin. Application logs go to standard output; `LOG_LEVEL` controls their minimum level.
 
 CI runs the Django checks, migration consistency check, Django tests, and TypeScript/Vite production build on pushes and pull requests.
 
