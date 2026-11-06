@@ -948,6 +948,222 @@ p, h1, h2, h3, h4 {
   font-size: 0.84rem;
 }
 
+.ai-assistant {
+  margin: 0 auto 1rem;
+  max-width: 58rem;
+}
+
+.ai-launcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.45rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid rgba(27, 94, 82, 0.18);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(94, 234, 212, 0.16), rgba(157, 162, 255, 0.12));
+  color: var(--primary-strong);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.ai-launcher > span {
+  font-size: 1rem;
+}
+
+.ai-launcher-active {
+  background: rgba(27, 94, 82, 0.13);
+}
+
+.ai-panel {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 0.8rem;
+  padding: 1rem;
+  border: 1px solid rgba(27, 94, 82, 0.14);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 35px rgba(15, 23, 42, 0.07);
+}
+
+.ai-panel-heading,
+.ai-result-heading,
+.ai-submit-row,
+.ai-chat-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.ai-panel-heading h2 {
+  margin-top: 0.15rem;
+  font-size: 1.05rem;
+  letter-spacing: -0.04em;
+}
+
+.ai-panel-heading .eyebrow {
+  color: var(--primary);
+  font-size: 0.62rem;
+}
+
+.ai-close-button {
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+  font-size: 1.2rem;
+}
+
+.ai-provider-label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.ai-provider-select,
+.ai-prompt-form textarea {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
+}
+
+.ai-provider-select:focus,
+.ai-prompt-form textarea:focus {
+  outline: 2px solid rgba(27, 94, 82, 0.2);
+  border-color: rgba(27, 94, 82, 0.55);
+}
+
+.ai-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.ai-action-grid button,
+.ai-edit-button {
+  min-height: 2.3rem;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.9);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.ai-action-grid button:hover:not(:disabled),
+.ai-edit-button:hover:not(:disabled) {
+  border-color: rgba(27, 94, 82, 0.28);
+  color: var(--primary-strong);
+}
+
+.ai-action-grid button:disabled,
+.ai-edit-button:disabled,
+.ai-send-button:disabled,
+.ai-apply-button:disabled {
+  opacity: 0.5;
+}
+
+.ai-prompt-form {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ai-prompt-form textarea {
+  min-height: 5rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.ai-submit-row {
+  justify-content: flex-end;
+}
+
+.ai-edit-button,
+.ai-send-button,
+.ai-apply-button {
+  padding: 0.55rem 0.8rem;
+}
+
+.ai-send-button,
+.ai-apply-button {
+  min-height: 2.3rem;
+  border: 0;
+  border-radius: 10px;
+  background: var(--primary);
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.ai-empty-state {
+  padding: 0.9rem;
+  border-radius: 14px;
+  background: rgba(27, 94, 82, 0.06);
+}
+
+.ai-empty-state p,
+.ai-apply-note {
+  margin-top: 0.35rem;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.ai-result {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.76);
+}
+
+.ai-result-heading strong {
+  font-size: 0.8rem;
+}
+
+.ai-result-heading button,
+.ai-chat-context button {
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.ai-result pre {
+  max-height: 18rem;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.ai-apply-button {
+  justify-self: start;
+}
+
+.ai-error {
+  color: #a73232;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.ai-chat-context {
+  color: var(--text-soft);
+  font-size: 0.73rem;
+}
+
 @media (max-width: 980px) {
   .auth-panel {
     grid-template-columns: 1fr;
@@ -973,6 +1189,10 @@ p, h1, h2, h3, h4 {
   .dashboard-hero {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .ai-action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

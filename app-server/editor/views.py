@@ -72,9 +72,13 @@ def ai_completion(request, workspace_id, file_id):
 	context = body.get("context", "")
 	prompt = body.get("prompt", "")
 	history = body.get("history", [])
-	if provider not in PROVIDERS or not any(item["id"] == provider for item in available_providers()):
+	if (
+		not isinstance(provider, str)
+		or provider not in PROVIDERS
+		or not any(item["id"] == provider for item in available_providers())
+	):
 		return _error("Choose an AI provider configured by your workspace administrator.", 503)
-	if action not in ACTION_INSTRUCTIONS:
+	if not isinstance(action, str) or action not in ACTION_INSTRUCTIONS:
 		return _error("AI action is invalid.", 400)
 	if (
 		not isinstance(document_name, str)
