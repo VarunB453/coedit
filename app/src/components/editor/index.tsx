@@ -270,10 +270,15 @@ const Editor: React.FC<Props> = (props) => {
     let active = true;
     let complete = false;
     let requesting = false;
+    let initializationErrorReported = false;
     let retryTimer = 0;
 
     const requestInitialization = async () => {
       if (!active || complete || requesting) return;
+      if (!navigator.onLine) {
+        setSeedContent((current) => current ?? (ydoc.share.size === 0));
+        return;
+      }
       requesting = true;
       try {
         const method = editable ? "POST" : "GET";
@@ -291,6 +296,7 @@ const Editor: React.FC<Props> = (props) => {
         if (!response.ok) throw new Error("Could not initialize document sync.");
         const result = await response.json();
         if (!active) return;
+        initializationErrorReported = false;
         if (result.ready) {
           complete = true;
           setSeedContent(Boolean(result.initialize) && ydoc.share.size === 0);
@@ -301,7 +307,10 @@ const Editor: React.FC<Props> = (props) => {
           );
         }
       } catch (error) {
-        console.error("Could not initialize document sync.", error);
+        if (!initializationErrorReported) {
+          console.error("Could not initialize document sync.", error);
+          initializationErrorReported = true;
+        }
         if (active) {
           setSeedContent((current) => current ?? (ydoc.share.size === 0));
           retryTimer = window.setTimeout(requestInitialization, 2000);
