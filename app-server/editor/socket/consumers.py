@@ -50,12 +50,15 @@ class EditorConsumer(AsyncWebsocketConsumer):
 
         self.document_id, self.role = access
         self.room_group_name = f"editor_{self.document_id}"
+        self.user_group_name = f"editor_user_{user.id}"
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+        await self.channel_layer.group_add(self.user_group_name, self.channel_name)
         await self.accept()
 
     async def disconnect(self, close_code):
         if hasattr(self, "room_group_name"):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+            await self.channel_layer.group_discard(self.user_group_name, self.channel_name)
 
     async def receive(self, bytes_data=None, text_data=None):
         if bytes_data is None or len(bytes_data) > MAX_WEBSOCKET_MESSAGE_BYTES:
@@ -99,6 +102,15 @@ class EditorConsumer(AsyncWebsocketConsumer):
 
     async def editor_message(self, event):
         await self.send(bytes_data=event["bytes_data"])
+
+    async def editor_access_changed(self, event):
+        access = await self._document_access(
+            self.document_id, self.scope.get("user", AnonymousUser())
+        )
+        if access is None:
+            await self.close(code=4403)
+            return
+        self.document_id, self.role = access
 
     async def _refresh_access(self):
         access = await self._document_access(

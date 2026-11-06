@@ -4,6 +4,8 @@ import uuid
 from datetime import timedelta
 from math import ceil
 
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -150,10 +152,37 @@ def workspace_members(request, workspace_id):
 		return _error("User was not found.", 404)
 	if user.id == request.user.id:
 		return _error("The owner already has full access.", 400)
-	membership, _ = WorkspaceMembership.objects.update_or_create(
+	membership, created = WorkspaceMembership.objects.update_or_create(
 		workspace=workspace, user=user, defaults={"role": member_role}
 	)
+	if not created:
+		async_to_sync(get_channel_layer().group_send)(
+			f"editor_user_{user.id}", {"type": "editor_access_changed"}
+		)
 	return JsonResponse({"id": user.id, "username": user.get_username(), "role": membership.role}, status=201)
+
+
+@require_http_methods(["DELETE"])
+def workspace_member(request, workspace_id, user_id):
+	if not _authenticated(request):
+		return _error("Authentication required.", 401)
+	try:
+		workspace = Workspace.objects.get(id=workspace_id)
+	except Workspace.DoesNotExist:
+		return _error("Workspace was not found.", 404)
+	if _workspace_role(workspace, request.user) != "owner":
+		return _error("Only the workspace owner can manage members.", 403)
+	if user_id == workspace.owner_id:
+		return _error("The workspace owner cannot be removed.", 400)
+	try:
+		membership = WorkspaceMembership.objects.get(workspace=workspace, user_id=user_id)
+	except WorkspaceMembership.DoesNotExist:
+		return _error("Workspace member was not found.", 404)
+	membership.delete()
+	async_to_sync(get_channel_layer().group_send)(
+		f"editor_user_{user_id}", {"type": "editor_access_changed"}
+	)
+	return JsonResponse({})
 
 
 @require_http_methods(["GET", "POST"])

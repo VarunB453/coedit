@@ -1,7 +1,7 @@
 import asyncio
 from datetime import timedelta
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
@@ -149,6 +149,25 @@ class WorkspaceFileApiTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(denied.status_code, 403)
+
+    @override_settings(CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}})
+    def test_only_owner_can_revoke_workspace_members(self):
+        editor = get_user_model().objects.create_user(username="revoked-editor")
+        WorkspaceMembership.objects.create(
+            workspace=self.workspace, user=editor, role=WorkspaceMembership.Role.EDITOR
+        )
+        member_url = f"/api/workspaces/{self.workspace_id}/members/{editor.id}/"
+
+        self.client.force_login(editor)
+        denied = self.client.delete(member_url)
+        self.assertEqual(denied.status_code, 403)
+
+        self.client.force_login(self.owner)
+        removed = self.client.delete(member_url)
+        self.assertEqual(removed.status_code, 200)
+        self.assertFalse(
+            WorkspaceMembership.objects.filter(workspace=self.workspace, user=editor).exists()
+        )
 
     def test_legacy_workspace_is_not_implicitly_claimed(self):
         legacy = Workspace.objects.create()
@@ -319,7 +338,7 @@ class DurableCollaborationTests(TransactionTestCase):
         async_to_sync(exercise_denials)()
 
     def test_existing_editor_connections_respect_role_changes(self):
-        editor = get_user_model().objects.create_user(username="editor", ******)
+        editor = get_user_model().objects.create_user(username="editor")
         membership = WorkspaceMembership.objects.create(
             workspace=self.workspace, user=editor, role=WorkspaceMembership.Role.EDITOR
         )
@@ -332,15 +351,20 @@ class DurableCollaborationTests(TransactionTestCase):
             self.assertTrue(connected)
 
             membership.role = WorkspaceMembership.Role.VIEWER
-            membership.save(update_fields=["role"])
+            await sync_to_async(membership.save)(update_fields=["role"])
             await communicator.send_to(bytes_data=b"\x00\x02\x01v")
             self.assertTrue(await communicator.receive_nothing(timeout=0.1))
-            self.assertEqual(
-                DocumentUpdate.objects.filter(document=self.document).count(), 0
-            )
+            update_count = await sync_to_async(
+                lambda: DocumentUpdate.objects.filter(document=self.document).count()
+            )()
+            self.assertEqual(update_count, 0)
 
-            membership.delete()
-            await communicator.send_to(bytes_data=b"\x00\x02\x01r")
+            await sync_to_async(membership.delete)()
+            from channels.layers import get_channel_layer
+
+            await get_channel_layer().group_send(
+                f"editor_user_{editor.id}", {"type": "editor_access_changed"}
+            )
             close_message = await communicator.receive_output(timeout=1)
             self.assertEqual(close_message["type"], "websocket.close")
             self.assertEqual(close_message["code"], 4403)
