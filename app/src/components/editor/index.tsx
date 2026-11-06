@@ -65,10 +65,8 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
   provider,
   seedContent,
 }) => {
-  // remirror error handler
   const onError: InvalidContentHandler = useCallback(
     ({ json, invalidContent, transformers }: any) => {
-      // Automatically remove all invalid nodes and marks.
       return transformers.remove(json, invalidContent);
     },
     []
@@ -96,32 +94,43 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
         getProvider: () => provider,
       }),
     ],
-    content: seedContent ? initialContent as any : undefined,
+    content: seedContent ? (initialContent as any) : undefined,
     selection: "start",
     onError,
   });
 
   return (
-    <div className="mt-2 mb-4">
-      <Remirror
-        manager={manager}
-        initialContent={state}
-        editable={editable}
-        placeholder="Start typing...Please be respectful :)"
-        classNames={[
-          "p-4 focus:outline-none h-96 overflow-y-auto scrollbar-hide prose lg:prose-xl prose-p:m-0",
-        ]}
-      >
-        <div className="rounded-md border">
-          <EditorComponent />
-          <OnChangeJSON
-            onChange={(json) => {
-              onChange(json as any);
-              onContentChange(json);
-            }}
-          />
+    <div className="editor-shell">
+      <div className="editor-surface-panel">
+        <div className="editor-toolbar-row">
+          <span className="editor-toolbar-pill">
+            <span className="toolbar-indicator" />
+            Live sync
+          </span>
+          <span className="editor-toolbar-caption">{editable ? "Editing enabled" : "Read only"}</span>
         </div>
-      </Remirror>
+
+        <Remirror
+          manager={manager}
+          initialContent={state}
+          editable={editable}
+          placeholder="Start typing...Please be respectful :)"
+          classNames={[
+            "editor-content",
+            "scrollbar-hide",
+          ]}
+        >
+          <div className="editor-inner-surface">
+            <EditorComponent />
+            <OnChangeJSON
+              onChange={(json) => {
+                onChange(json as any);
+                onContentChange(json);
+              }}
+            />
+          </div>
+        </Remirror>
+      </div>
     </div>
   );
 };
@@ -208,7 +217,7 @@ const Editor: React.FC<Props> = (props) => {
   }, [editable, fileId, provider, workspaceId]);
 
   if (seedContent === null) {
-    return <p className="p-4 text-sm text-slate-500">Waiting for document sync…</p>;
+    return <p className="editor-loading">Waiting for document sync…</p>;
   }
 
   return <EditorSurface {...props} provider={provider} seedContent={seedContent} />;
