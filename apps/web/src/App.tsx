@@ -7,6 +7,7 @@ import type { NotificationInfo } from "./features/notifications/types";
 import type { MemberInfo, ShareLinkInfo, WorkspaceInfo } from "./features/workspaces/types";
 import AuthScreen, { type AuthMode } from "./features/auth/components/auth-screen";
 import FileTree from "./features/documents/components/file-tree";
+import WorkspaceDashboard from "./features/documents/components/workspace-dashboard";
 import DocumentActivityPanel from "./features/collaboration/components/document-activity-panel";
 import { authenticate, endSession, getProfile, getSession, updateProfile } from "./features/auth/api";
 import type { ProfileUpdate } from "./features/auth/api";
@@ -1030,69 +1031,15 @@ const App = () => {
               </div>
             </>
           ) : (
-            <div className="workspace-dashboard">
-              <div className="dashboard-hero card-surface">
-                <div>
-                  <p className="eyebrow">Overview</p>
-                  <h1>Keep the whole team moving.</h1>
-                  <p>
-                    Collaborate on product strategy, meeting notes, and launch artifacts in one visually calm workspace.
-                  </p>
-                </div>
-                <div className="dashboard-hero-actions">
-                  <button type="button" className="primary-btn" onClick={() => openDialog("create-file")}>
-                    Create file
-                  </button>
-                  <button type="button" className="soft-button subtle-button" onClick={() => openDialog("create-folder")}>
-                    New folder
-                  </button>
-                </div>
-              </div>
-
-              <div className="dashboard-metrics">
-                <div className="metric-card card-surface">
-                  <p className="metric-card-label">Documents</p>
-                  <strong>{fileCount}</strong>
-                  <span>Active files</span>
-                </div>
-                <div className="metric-card card-surface">
-                  <p className="metric-card-label">Workspace</p>
-                  <strong>{currentWorkspace?.name ?? "Ready"}</strong>
-                  <span>Shared room</span>
-                </div>
-                <div className="metric-card card-surface">
-                  <p className="metric-card-label">Collaboration</p>
-                  <strong>{workspaceRole ?? "Guest"}</strong>
-                  <span>Access role</span>
-                </div>
-              </div>
-
-              <div className="recent-documents card-surface">
-                <div className="section-heading-row">
-                  <h2>Recent documents</h2>
-                  <button type="button" className="inline-link" onClick={() => openDialog("create-file")}>
-                    Create new
-                  </button>
-                </div>
-
-                {recentDocuments.length ? (
-                  recentDocuments.map((entry) => (
-                    <button key={entry.id} type="button" className="recent-document-row" onClick={() => setSelectedId(entry.id)}>
-                      <span className="recent-document-icon">D</span>
-                      <span className="recent-document-copy">
-                        <strong>{entry.name}</strong>
-                        <small>{entry.updated_at ? new Date(entry.updated_at).toLocaleDateString() : "Updated recently"}</small>
-                      </span>
-                      <span className="recent-arrow">→</span>
-                    </button>
-                  ))
-                ) : (
-                  <div className="empty-state-inline">
-                    <p>No documents yet. Create your first note to get started.</p>
-                  </div>
-                )}
-              </div>
-            </div>
+            <WorkspaceDashboard
+              recentDocuments={recentDocuments}
+              fileCount={fileCount}
+              workspaceName={currentWorkspace?.name}
+              workspaceRole={workspaceRole}
+              onCreateFile={() => openDialog("create-file")}
+              onCreateFolder={() => openDialog("create-folder")}
+              onSelectDocument={setSelectedId}
+            />
           )}
         </section>
       </div>
