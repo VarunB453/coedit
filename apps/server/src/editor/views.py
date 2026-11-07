@@ -9,23 +9,21 @@ from math import ceil
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
-from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import JsonResponse
-from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from .models import (
-	DocumentComment, DocumentVersion, FileEntry, Notification, UserProfile,
+	DocumentComment, DocumentVersion, FileEntry, Notification,
 	Workspace, WorkspaceMembership, WorkspaceShareLink,
 )
 from .models import empty_document
 from .ai import stream_completion
+from modules.auth.views import auth_profile, auth_session, csrf_token, display_name as _display_name, end_session, register, user_payload as _user_payload
 from modules.ai import views as ai_views
 from modules.shared.http import error as _error, parse_json_object
 from modules.shared.permissions import is_authenticated as _authenticated
@@ -44,131 +42,6 @@ def ai_providers(request):
 
 def ai_completion(request, workspace_id, file_id):
 	return ai_views.ai_completion(request, workspace_id, file_id, stream_completion)
-
-
-@require_http_methods(["GET"])
-def csrf_token(request):
-	return JsonResponse({"csrfToken": get_token(request)})
-
-
-@require_http_methods(["GET", "POST"])
-def auth_session(request):
-	if request.method == "GET":
-		if not _authenticated(request):
-			return _error("Authentication required.", 401)
-		return JsonResponse(_user_payload(request.user))
-	body = _parse_body(request)
-	if body is None:
-		return _error("Request body must be a JSON object.", 400)
-	username = body.get("username", "")
-	password = body.get("password", "")
-	if not isinstance(username, str) or not isinstance(password, str):
-		return _error("Username or password is incorrect.", 401)
-	user = authenticate(request, username=username, password=password)
-	if user is None:
-		return _error("Username or password is incorrect.", 401)
-	login(request, user)
-	return JsonResponse(_user_payload(user))
-
-
-def _user_payload(user):
-	profile, _ = UserProfile.objects.get_or_create(user=user)
-	return {
-		"id": user.id,
-		"username": user.get_username(),
-		"display_name": profile.display_name or user.get_username(),
-		"email": user.email,
-	}
-
-
-def _display_name(user):
-	profile = getattr(user, "profile", None)
-	return (profile.display_name if profile else "") or user.get_username()
-
-
-@require_http_methods(["GET", "PATCH"])
-def auth_profile(request):
-	if not _authenticated(request):
-		return _error("Authentication required.", 401)
-	if request.method == "GET":
-		return JsonResponse(_user_payload(request.user))
-	body = _parse_body(request)
-	if body is None:
-		return _error("Request body must be a JSON object.", 400)
-	allowed = {"display_name", "email", "current_password", "new_password"}
-	if set(body) - allowed:
-		return _error("Profile fields are invalid.", 400)
-	display_name = body.get("display_name")
-	email = body.get("email")
-	if display_name is not None and (
-		not isinstance(display_name, str) or len(display_name.strip()) > 100
-	):
-		return _error("Display name must be 100 characters or fewer.", 400)
-	if email is not None and (not isinstance(email, str) or len(email.strip()) > 254):
-		return _error("Email must be 254 characters or fewer.", 400)
-	if email is not None:
-		try:
-			validate_email(email.strip())
-		except ValidationError:
-			if email.strip():
-				return _error("Enter a valid email address.", 400)
-	new_password = body.get("new_password")
-	if new_password is not None:
-		if not isinstance(new_password, str):
-			return _error("New password must be a string.", 400)
-		if not isinstance(body.get("current_password"), str) or not request.user.check_password(body["current_password"]):
-			return _error("Current password is incorrect.", 400)
-		try:
-			validate_password(new_password, request.user)
-		except ValidationError as error:
-			return _error(" ".join(error.messages), 400)
-		request.user.set_password(new_password)
-	user_update_fields = []
-	if email is not None:
-		request.user.email = email.strip()
-		user_update_fields.append("email")
-	if new_password is not None:
-		user_update_fields.append("password")
-	if user_update_fields:
-		request.user.save(update_fields=user_update_fields)
-	if display_name is not None:
-		profile, _ = UserProfile.objects.get_or_create(user=request.user)
-		profile.display_name = display_name.strip()
-		profile.save(update_fields=["display_name"])
-	if new_password is not None:
-		update_session_auth_hash(request, request.user)
-	return JsonResponse(_user_payload(request.user))
-
-
-@require_http_methods(["POST"])
-def register(request):
-	body = _parse_body(request)
-	if body is None:
-		return _error("Request body must be a JSON object.", 400)
-	username = body.get("username")
-	password = body.get("password")
-	if not isinstance(username, str) or not re.fullmatch(r"[A-Za-z0-9_.@+-]{1,150}", username.strip()):
-		return _error("Enter a valid username.", 400)
-	if not isinstance(password, str):
-		return _error("Password is required.", 400)
-	User = get_user_model()
-	user = User(username=username.strip())
-	try:
-		validate_password(password, user)
-		user.set_password(password)
-		user.save()
-	except ValidationError as error:
-		return JsonResponse({"error": " ".join(error.messages)}, status=400)
-	except IntegrityError:
-		return _error("That username is already in use.", 409)
-	login(request, user)
-	return JsonResponse(_user_payload(user), status=201)
-
-
-@require_http_methods(["POST"])
-def end_session(request):
-	logout(request)
-	return JsonResponse({})
 
 
 @require_http_methods(["GET", "POST"])
