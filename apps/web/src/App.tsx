@@ -8,6 +8,7 @@ import type { MemberInfo, ShareLinkInfo, WorkspaceInfo } from "./features/worksp
 import AuthScreen, { type AuthMode } from "./features/auth/components/auth-screen";
 import FileTree from "./features/documents/components/file-tree";
 import { authenticate, endSession, getProfile, getSession, updateProfile } from "./features/auth/api";
+import type { ProfileUpdate } from "./features/auth/api";
 
 const Editor = lazy(() => import("./components/editor"));
 
@@ -560,7 +561,7 @@ const App = () => {
     event.preventDefault();
     setProfileMessage("");
     try {
-      const payload: Record<string, string> = { display_name: profileName, email: profileEmail };
+      const payload: ProfileUpdate = { display_name: profileName, email: profileEmail };
       if (newPassword) {
         payload.current_password = currentPassword;
         payload.new_password = newPassword;
