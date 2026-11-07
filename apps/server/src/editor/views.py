@@ -25,7 +25,8 @@ from .models import (
 	Workspace, WorkspaceMembership, WorkspaceShareLink,
 )
 from .models import empty_document
-from modules.ai.views import ai_completion, ai_providers
+from .ai import stream_completion
+from modules.ai import views as ai_views
 from modules.shared.http import error as _error, parse_json_object
 from modules.shared.permissions import is_authenticated as _authenticated
 from modules.shared.permissions import workspace_role as _workspace_role
@@ -35,6 +36,14 @@ MAX_NAME_LENGTH = 100
 MAX_CONTENT_BYTES = 1_000_000
 MAX_COMMENT_LENGTH = 4000
 logger = logging.getLogger(__name__)
+
+
+def ai_providers(request):
+	return ai_views.ai_providers(request)
+
+
+def ai_completion(request, workspace_id, file_id):
+	return ai_views.ai_completion(request, workspace_id, file_id, stream_completion)
 
 
 @require_http_methods(["GET"])

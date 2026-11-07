@@ -22,7 +22,7 @@ def ai_providers(request):
 
 
 @require_http_methods(["POST"])
-def ai_completion(request, workspace_id, file_id):
+def ai_completion(request, workspace_id, file_id, completion_stream=None):
 	if not is_authenticated(request):
 		return error("Authentication required.", 401)
 	body = parse_json_object(request, 1_000_000 + 4096)
@@ -72,10 +72,11 @@ def ai_completion(request, workspace_id, file_id):
 		return error("Enter an instruction or question.", 400)
 
 	messages = build_messages(action, document_name, context, prompt, history)
+	stream = completion_stream or stream_completion
 
 	def events():
 		try:
-			for text in stream_completion(provider, messages):
+			for text in stream(provider, messages):
 				yield f"data: {json.dumps({'text': text}, ensure_ascii=False)}\n\n"
 			yield "data: {\"done\":true}\n\n"
 		except RuntimeError as error:
