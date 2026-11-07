@@ -1,6 +1,5 @@
 import { API_BASE, apiFetch } from "../../lib/api/client";
-import type { AuthUser } from "./types";
-import type { AuthMode } from "./components/auth-screen";
+import type { AuthMode, AuthUser } from "./types";
 
 export interface ProfileUpdate {
   display_name: string;

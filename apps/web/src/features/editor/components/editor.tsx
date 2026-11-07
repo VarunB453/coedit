@@ -33,7 +33,7 @@ import {
   EditorComponent,
   OnChangeJSON,
 } from "@remirror/react";
-import AIAssistant from "./ai-assistant";
+import AIAssistant from "../../ai-assistant/components/ai-assistant";
 
 export interface Props {
   username: string;

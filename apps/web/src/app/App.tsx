@@ -1,18 +1,18 @@
 import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch, API_BASE } from "./lib/api/client";
-import type { AuthUser } from "./features/auth/types";
-import type { CommentInfo, VersionInfo } from "./features/collaboration/types";
-import type { FileEntry, SearchResult } from "./features/documents/types";
-import type { NotificationInfo } from "./features/notifications/types";
-import type { MemberInfo, ShareLinkInfo, WorkspaceInfo } from "./features/workspaces/types";
-import AuthScreen, { type AuthMode } from "./features/auth/components/auth-screen";
-import FileTree from "./features/documents/components/file-tree";
-import WorkspaceDashboard from "./features/documents/components/workspace-dashboard";
-import DocumentActivityPanel from "./features/collaboration/components/document-activity-panel";
-import { authenticate, endSession, getProfile, getSession, updateProfile } from "./features/auth/api";
-import type { ProfileUpdate } from "./features/auth/api";
+import { apiFetch, API_BASE } from "../lib/api/client";
+import type { AuthMode, AuthUser } from "../features/auth/types";
+import type { CommentInfo, VersionInfo } from "../features/collaboration/types";
+import type { FileEntry, SearchResult } from "../features/documents/types";
+import type { NotificationInfo } from "../features/notifications/types";
+import type { MemberInfo, ShareLinkInfo, WorkspaceInfo } from "../features/workspaces/types";
+import AuthScreen from "../features/auth/components/auth-screen";
+import FileTree from "../features/documents/components/file-tree";
+import WorkspaceDashboard from "../features/documents/components/workspace-dashboard";
+import DocumentActivityPanel from "../features/collaboration/components/document-activity-panel";
+import { authenticate, endSession, getProfile, getSession, updateProfile } from "../features/auth/api";
+import type { ProfileUpdate } from "../features/auth/api";
 
-const Editor = lazy(() => import("./components/editor"));
+const Editor = lazy(() => import("../features/editor/components/editor"));
 
 type DialogMode = "create-file" | "create-folder" | "rename";
 const workspaceStorageKey = "collaborative-editor-workspace";

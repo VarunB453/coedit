@@ -1,6 +1,5 @@
 import type { FormEvent } from "react";
-
-export type AuthMode = "login" | "register";
+import type { AuthMode } from "../types";
 
 interface AuthScreenProps {
   mode: AuthMode;
