@@ -8,6 +8,7 @@ import { WebsocketProvider } from "y-websocket";
 import { IndexeddbPersistence } from "y-indexeddb";
 
 import { InvalidContentHandler } from "remirror";
+import type { RemirrorJSON } from "remirror";
 import {
   BoldExtension,
   ItalicExtension,
@@ -118,7 +119,7 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
         },
       }),
     ],
-    content: seedContent ? (initialContent as any) : undefined,
+    content: seedContent ? (initialContent as unknown as RemirrorJSON) : undefined,
     selection: "start",
     onError,
   });
