@@ -7,6 +7,7 @@ import type { NotificationInfo } from "./features/notifications/types";
 import type { MemberInfo, ShareLinkInfo, WorkspaceInfo } from "./features/workspaces/types";
 import AuthScreen, { type AuthMode } from "./features/auth/components/auth-screen";
 import FileTree from "./features/documents/components/file-tree";
+import { authenticate, endSession, getProfile, getSession, updateProfile } from "./features/auth/api";
 
 const Editor = lazy(() => import("./components/editor"));
 
@@ -122,12 +123,7 @@ const App = () => {
 
   useEffect(() => {
     let active = true;
-    apiFetch(`${API_BASE}/api/auth/session/`)
-      .then(async (response) => {
-        if (response.status === 401) return null;
-        if (!response.ok) throw new Error("Could not verify session.");
-        return (await response.json()) as AuthUser;
-      })
+    getSession()
       .then(async (sessionUser) => {
         if (!active) return;
         if (sessionUser) {
@@ -137,9 +133,7 @@ const App = () => {
           } catch (error) {
             setLoadError(error instanceof Error ? error.message : "Could not accept the sharing link.");
           }
-          const refreshedUser = await apiFetch(`${API_BASE}/api/auth/profile/`);
-          if (!refreshedUser.ok) throw new Error("Could not load your profile.");
-          const profile = (await refreshedUser.json()) as AuthUser;
+          const profile = await getProfile();
           setUser(profile);
           const response = await apiFetch(`${API_BASE}/api/workspaces/`);
           if (!response.ok) throw new Error("Could not load your workspaces.");
@@ -441,16 +435,7 @@ const App = () => {
     event.preventDefault();
     setAuthError("");
     try {
-      const response = await apiFetch(
-        `${API_BASE}/api/auth/${authMode === "register" ? "register" : "session"}/`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: nameInput, password }),
-        }
-      );
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Sign-in failed.");
+      const result = await authenticate(authMode, nameInput, password);
       setUser(result as AuthUser);
       setPassword("");
       let sharedWorkspace: string | null = null;
@@ -580,13 +565,7 @@ const App = () => {
         payload.current_password = currentPassword;
         payload.new_password = newPassword;
       }
-      const response = await apiFetch(`${API_BASE}/api/auth/profile/`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not save account settings.");
+      const result = await updateProfile(payload);
       setUser(result as AuthUser);
       setCurrentPassword("");
       setNewPassword("");
@@ -642,7 +621,7 @@ const App = () => {
   };
 
   const signOut = async () => {
-    await apiFetch(`${API_BASE}/api/auth/logout/`, { method: "POST" });
+    await endSession();
     setUser(null);
     setWorkspaces([]);
     setWorkspaceId(null);
