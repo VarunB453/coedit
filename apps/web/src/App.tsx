@@ -7,6 +7,7 @@ import type { NotificationInfo } from "./features/notifications/types";
 import type { MemberInfo, ShareLinkInfo, WorkspaceInfo } from "./features/workspaces/types";
 import AuthScreen, { type AuthMode } from "./features/auth/components/auth-screen";
 import FileTree from "./features/documents/components/file-tree";
+import DocumentActivityPanel from "./features/collaboration/components/document-activity-panel";
 import { authenticate, endSession, getProfile, getSession, updateProfile } from "./features/auth/api";
 import type { ProfileUpdate } from "./features/auth/api";
 
@@ -982,51 +983,16 @@ const App = () => {
                     onDocumentChange={saveHistorySnapshot}
                   />
                 </Suspense>
-                <section className="document-activity card-surface">
-                  <div className="section-heading-row">
-                    <div>
-                      <p className="eyebrow">Collaboration</p>
-                      <h2>Comments &amp; history</h2>
-                    </div>
-                  </div>
-                  <form onSubmit={submitComment} className="comment-form">
-                    <label htmlFor="new-comment" className="sr-only">Add a comment</label>
-                    <textarea
-                      id="new-comment"
-                      value={commentInput}
-                      onChange={(event) => setCommentInput(event.target.value)}
-                      placeholder="Share feedback with your team…"
-                      maxLength={4000}
-                      className="text-input comment-input"
-                    />
-                    <button type="submit" className="primary-btn" disabled={!commentInput.trim()}>Comment</button>
-                  </form>
-                  {commentError && <p role="alert" className="auth-error">{commentError}</p>}
-                  <div className="comment-list">
-                    {comments.map((comment) => (
-                      <article key={comment.id} className="comment-item">
-                        <div className="section-heading-row">
-                          <strong>{comment.author}</strong>
-                          <small>{new Date(comment.created_at).toLocaleString()}</small>
-                        </div>
-                        <p>{comment.body}</p>
-                      </article>
-                    ))}
-                    {!comments.length && <p className="empty-state-inline">No comments yet.</p>}
-                  </div>
-                  <div className="history-list">
-                    <h3>Document history</h3>
-                    {versions.length ? versions.map((version) => (
-                      <button type="button" key={version.id} className="history-row" onClick={() => previewVersion(version.id)}>
-                        <span>{version.author}</span>
-                        <small>{new Date(version.created_at).toLocaleString()}</small>
-                      </button>
-                    )) : <p className="empty-state-inline">History snapshots are saved as you edit.</p>}
-                    {versionPreview !== null && (
-                      <pre className="version-preview">{versionPreview}</pre>
-                    )}
-                  </div>
-                </section>
+                <DocumentActivityPanel
+                  comments={comments}
+                  versions={versions}
+                  commentInput={commentInput}
+                  error={commentError}
+                  versionPreview={versionPreview}
+                  onCommentChange={setCommentInput}
+                  onSubmitComment={submitComment}
+                  onPreviewVersion={previewVersion}
+                />
               </div>
             </>
           ) : selectedEntry?.kind === "folder" ? (
