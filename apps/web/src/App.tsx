@@ -5,6 +5,8 @@ import type { CommentInfo, VersionInfo } from "./features/collaboration/types";
 import type { FileEntry, SearchResult } from "./features/documents/types";
 import type { NotificationInfo } from "./features/notifications/types";
 import type { MemberInfo, ShareLinkInfo, WorkspaceInfo } from "./features/workspaces/types";
+import AuthScreen, { type AuthMode } from "./features/auth/components/auth-screen";
+import FileTree from "./features/documents/components/file-tree";
 
 const Editor = lazy(() => import("./components/editor"));
 
@@ -34,7 +36,7 @@ const App = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [nameInput, setNameInput] = useState("");
   const [password, setPassword] = useState("");
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [authError, setAuthError] = useState("");
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
@@ -327,16 +329,6 @@ const App = () => {
       setCommentError(error instanceof Error ? error.message : "Could not save document history.");
     });
   }, [canEdit, documentUrl]);
-
-  const childrenByParent = useMemo(() => {
-    const grouped = new Map<string | null, FileEntry[]>();
-    for (const entry of entries) {
-      const siblings = grouped.get(entry.parent_id) ?? [];
-      siblings.push(entry);
-      grouped.set(entry.parent_id, siblings);
-    }
-    return grouped;
-  }, [entries]);
 
   const updateFolder = (folderId: string) => {
     setExpandedFolders((current) => {
@@ -666,106 +658,25 @@ const App = () => {
     window.history.replaceState(null, "", `${window.location.pathname}?${query}${window.location.hash}`);
   };
 
-  const renderTree = (parentId: string | null, depth = 0): React.ReactNode =>
-    (childrenByParent.get(parentId) ?? []).map((entry) => {
-      const isFolder = entry.kind === "folder";
-      const expanded = expandedFolders.has(entry.id);
-      const selected = selectedId === entry.id;
-      return (
-        <div key={entry.id}>
-          <button
-            type="button"
-            onClick={() => {
-              if (isFolder) {
-                updateFolder(entry.id);
-                setSelectedId(entry.id);
-              } else {
-                setSelectedId(entry.id);
-              }
-            }}
-            className={`file-tree-item ${selected ? "file-tree-item-selected" : ""}`}
-            style={{ paddingLeft: `${12 + depth * 16}px` }}
-          >
-            <span className="file-tree-caret" aria-hidden="true">
-              {isFolder ? (expanded ? "▾" : "▸") : "•"}
-            </span>
-            <span className="truncate">{entry.name}</span>
-          </button>
-          {isFolder && expanded && renderTree(entry.id, depth + 1)}
-        </div>
-      );
-    });
-
   if (authLoading) {
     return <main className="state-screen">Checking session…</main>;
   }
 
   if (!user) {
     return (
-      <main className="auth-screen">
-        <div className="auth-panel">
-          <div className="auth-hero">
-            <div className="auth-brand">
-              <span className="brand-mark">W</span>
-              <span>CoEdit</span>
-            </div>
-            <p className="eyebrow">Collaborative workspace</p>
-            <h1>Write together in real time.</h1>
-            <p className="auth-copy">
-              Create polished product notes, launch plans, and strategy docs with a calm, focused workspace built for teams.
-            </p>
-            <ul className="feature-list">
-              <li>Live collaborative editing</li>
-              <li>Structured folder workspaces</li>
-              <li>Clean notes and design thinking</li>
-            </ul>
-          </div>
-
-          <form onSubmit={submitAuth} className="auth-form">
-            <p className="eyebrow auth-eyebrow">{authMode === "login" ? "Welcome back" : "Get started"}</p>
-            <h2>{authMode === "login" ? "Sign in to your workspace" : "Create your account"}</h2>
-
-            <label htmlFor="username" className="field-label">Username</label>
-            <input
-              id="username"
-              autoComplete="username"
-              required
-              maxLength={150}
-              value={nameInput}
-              onChange={(event) => setNameInput(event.target.value)}
-              className="text-input"
-            />
-
-            <label htmlFor="password" className="field-label">Password</label>
-            <input
-              id="password"
-              type="password"
-              autoComplete={authMode === "login" ? "current-password" : "new-password"}
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="text-input"
-            />
-
-            {authError && <p role="alert" className="auth-error">{authError}</p>}
-
-            <button className="primary-btn auth-submit">
-              {authMode === "login" ? "Sign in" : "Create account"}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode(authMode === "login" ? "register" : "login");
-                setAuthError("");
-              }}
-              className="secondary-link"
-            >
-              {authMode === "login" ? "Create an account" : "Already have an account? Sign in"}
-            </button>
-          </form>
-        </div>
-      </main>
+      <AuthScreen
+        mode={authMode}
+        name={nameInput}
+        password={password}
+        error={authError}
+        onSubmit={submitAuth}
+        onNameChange={setNameInput}
+        onPasswordChange={setPassword}
+        onToggleMode={() => {
+          setAuthMode(authMode === "login" ? "register" : "login");
+          setAuthError("");
+        }}
+      />
     );
   }
 
@@ -945,7 +856,13 @@ const App = () => {
           </div>
 
           <nav aria-label="Workspace files" className="file-tree">
-            {renderTree(null)}
+            <FileTree
+              entries={entries}
+              expandedFolders={expandedFolders}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onToggleFolder={updateFolder}
+            />
             {entries.length === 0 && !loadError && <p className="empty-tree-message">No files yet</p>}
           </nav>
 
