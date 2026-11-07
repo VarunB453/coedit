@@ -1,45 +1,15 @@
 import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch, API_BASE } from "./lib/api/client";
+import type { AuthUser } from "./features/auth/types";
+import type { CommentInfo, VersionInfo } from "./features/collaboration/types";
+import type { FileEntry, SearchResult } from "./features/documents/types";
+import type { NotificationInfo } from "./features/notifications/types";
+import type { MemberInfo, ShareLinkInfo, WorkspaceInfo } from "./features/workspaces/types";
 
 const Editor = lazy(() => import("./components/editor"));
 
-type FileEntry = {
-  id: string;
-  name: string;
-  kind: "file" | "folder";
-  parent_id: string | null;
-  content: Record<string, unknown> | unknown[];
-  updated_at: string;
-};
-
-type WorkspaceInfo = { id: string; name: string; role: "owner" | "editor" | "viewer" };
-type AuthUser = { id: number; username: string; display_name: string; email: string };
-type CommentInfo = { id: number; body: string; author: string; created_at: string; resolved: boolean };
-type VersionInfo = { id: number; author: string; created_at: string };
-type SearchResult = { id: string; name: string; workspace_id: string; workspace_name: string; updated_at: string };
-type NotificationInfo = { id: number; kind: string; message: string; workspace_id: string; document_id: string | null; created_at: string; read: boolean };
-type MemberInfo = { id: number; username: string; display_name?: string; role: "owner" | "editor" | "viewer" };
-type ShareLinkInfo = { id: number; role: "editor" | "viewer"; created_at: string; expires_at: string | null };
-
 type DialogMode = "create-file" | "create-folder" | "rename";
-
-const API_BASE =
-  import.meta.env.VITE_API_URL ??
-  (window.location.hostname === "localhost"
-    ? "http://localhost:8000"
-    : window.location.origin);
 const workspaceStorageKey = "collaborative-editor-workspace";
-
-const apiFetch = async (url: string, options: RequestInit = {}) => {
-  const method = options.method ?? "GET";
-  const headers = new Headers(options.headers);
-  if (method !== "GET" && method !== "HEAD") {
-    const csrfResponse = await fetch(`${API_BASE}/api/csrf/`, { credentials: "include" });
-    if (!csrfResponse.ok) throw new Error("Could not establish a secure session.");
-    const { csrfToken } = await csrfResponse.json();
-    headers.set("X-CSRFToken", csrfToken);
-  }
-  return fetch(url, { ...options, headers, credentials: "include" });
-};
 
 const validateName = (input: string) => {
   const name = input.trim();
