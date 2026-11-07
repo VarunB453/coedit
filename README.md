@@ -5,7 +5,8 @@ CoEdit is a collaborative editor with a React/Vite frontend and a Django/Channel
 ## Repository layout
 
 - `apps/web/` contains the frontend application.
-- `apps/server/` contains the Django backend. Its project and Django app are in `src/core/` and `src/editor/`.
+- `apps/web/src/app/` composes the application; `src/features/` groups auth, documents, workspaces, editing, collaboration, notifications, and AI UI by domain.
+- `apps/server/` contains the Django backend. `src/core/` owns Django configuration, `src/editor/` keeps the stable models/migrations and compatibility view facade, and `src/modules/` contains domain views and shared request/validation helpers.
 
 ## Development
 
