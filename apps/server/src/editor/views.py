@@ -15,7 +15,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Q
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
@@ -25,106 +25,16 @@ from .models import (
 	Workspace, WorkspaceMembership, WorkspaceShareLink,
 )
 from .models import empty_document
-from .ai import ACTION_INSTRUCTIONS, PROVIDERS, available_providers, build_messages, stream_completion
+from modules.ai.views import ai_completion, ai_providers
+from modules.shared.http import error as _error, parse_json_object
+from modules.shared.permissions import is_authenticated as _authenticated
+from modules.shared.permissions import workspace_role as _workspace_role
 
 
 MAX_NAME_LENGTH = 100
 MAX_CONTENT_BYTES = 1_000_000
 MAX_COMMENT_LENGTH = 4000
 logger = logging.getLogger(__name__)
-
-
-def _error(message, status):
-	return JsonResponse({"error": message}, status=status)
-
-
-def _authenticated(request):
-	if request.user.is_authenticated:
-		return True
-	return False
-
-
-def _workspace_role(workspace, user):
-	if workspace.owner_id == user.id:
-		return "owner"
-	membership = WorkspaceMembership.objects.filter(workspace=workspace, user=user).first()
-	if membership:
-		return membership.role
-	return None
-
-
-@require_http_methods(["GET"])
-def ai_providers(request):
-	if not _authenticated(request):
-		return _error("Authentication required.", 401)
-	return JsonResponse({"providers": available_providers()})
-
-
-@require_http_methods(["POST"])
-def ai_completion(request, workspace_id, file_id):
-	if not _authenticated(request):
-		return _error("Authentication required.", 401)
-	body = _parse_body(request)
-	if body is None:
-		return _error("Request body must be a JSON object.", 400)
-	try:
-		entry = FileEntry.objects.select_related("workspace").get(
-			id=file_id, workspace_id=workspace_id, kind=FileEntry.Kind.FILE
-		)
-	except FileEntry.DoesNotExist:
-		return _error("Document was not found.", 404)
-	if _workspace_role(entry.workspace, request.user) is None:
-		return _error("Document was not found.", 404)
-
-	provider = body.get("provider")
-	action = body.get("action")
-	document_name = body.get("document_name", entry.name)
-	context = body.get("context", "")
-	prompt = body.get("prompt", "")
-	history = body.get("history", [])
-	if not isinstance(provider, str) or provider not in PROVIDERS:
-		return _error("AI provider is invalid.", 400)
-	if not any(item["id"] == provider for item in available_providers()):
-		return _error("Choose an AI provider configured by your workspace administrator.", 503)
-	if not isinstance(action, str) or action not in ACTION_INSTRUCTIONS:
-		return _error("AI action is invalid.", 400)
-	if (
-		not isinstance(document_name, str)
-		or len(document_name) > MAX_NAME_LENGTH
-		or not isinstance(context, str)
-		or len(context) > 60000
-		or not isinstance(prompt, str)
-		or len(prompt) > 4000
-		or not isinstance(history, list)
-		or len(history) > 12
-	):
-		return _error("AI request exceeds the supported size.", 400)
-	if any(
-		not isinstance(message, dict)
-		or message.get("role") not in {"user", "assistant"}
-		or not isinstance(message.get("content"), str)
-		or len(message["content"]) > 4000
-		for message in history
-	):
-		return _error("Conversation history is invalid.", 400)
-	if not prompt.strip() and action not in {"summarize", "grammar", "insights"}:
-		return _error("Enter an instruction or question.", 400)
-
-	messages = build_messages(action, document_name, context, prompt, history)
-
-	def events():
-		try:
-			for text in stream_completion(provider, messages):
-				yield f"data: {json.dumps({'text': text}, ensure_ascii=False)}\n\n"
-			yield "data: {\"done\":true}\n\n"
-		except RuntimeError as error:
-			logger.warning("AI provider stream failed: %s", error)
-			yield f"event: error\ndata: {json.dumps({'error': str(error)})}\n\n"
-
-	response = StreamingHttpResponse(events(), content_type="text/event-stream; charset=utf-8")
-	response["Cache-Control"] = "no-cache, no-transform"
-	response["X-Accel-Buffering"] = "no"
-	return response
 
 
 @require_http_methods(["GET"])
@@ -620,13 +530,7 @@ def document_initialization(request, workspace_id, file_id):
 
 
 def _parse_body(request):
-	if len(request.body) > MAX_CONTENT_BYTES + 4096:
-		return None
-	try:
-		body = json.loads(request.body or b"{}")
-	except (json.JSONDecodeError, UnicodeDecodeError):
-		return None
-	return body if isinstance(body, dict) else None
+	return parse_json_object(request, MAX_CONTENT_BYTES + 4096)
 
 
 def _serialize(entry):
