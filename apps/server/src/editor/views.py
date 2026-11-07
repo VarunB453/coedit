@@ -18,13 +18,15 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from .models import (
-	DocumentComment, DocumentVersion, FileEntry, Notification,
+	FileEntry, Notification,
 	Workspace, WorkspaceMembership, WorkspaceShareLink,
 )
 from .models import empty_document
 from .ai import stream_completion
 from modules.auth.views import auth_profile, auth_session, csrf_token, display_name as _display_name, end_session, register, user_payload as _user_payload
 from modules.ai import views as ai_views
+from modules.collaboration.views import document_comments, document_history, document_version
+from modules.notifications.views import notifications
 from modules.shared.http import error as _error, parse_json_object
 from modules.shared.permissions import is_authenticated as _authenticated
 from modules.shared.permissions import workspace_role as _workspace_role
@@ -184,113 +186,6 @@ def search_documents(request):
 		for entry in entries.distinct().order_by("-updated_at")[:50]
 	]
 	return JsonResponse({"results": results})
-
-
-@require_http_methods(["GET", "POST"])
-def document_comments(request, workspace_id, file_id):
-	entry, role, error = _member_document(request, workspace_id, file_id)
-	if error:
-		return error
-	if request.method == "GET":
-		comments = entry.comments.select_related("author__profile").all()
-		return JsonResponse([
-			{"id": comment.id, "body": comment.body,
-			 "author": _display_name(comment.author) if comment.author else "Former user",
-			 "created_at": comment.created_at.isoformat(),
-			 "resolved": comment.resolved_at is not None}
-			for comment in comments
-		], safe=False)
-	body = _parse_body(request)
-	text = body.get("body") if body else None
-	if not isinstance(text, str) or not text.strip() or len(text.strip()) > MAX_COMMENT_LENGTH:
-		return _error("Comment must be between 1 and 4,000 characters.", 400)
-	comment = DocumentComment.objects.create(document=entry, author=request.user, body=text.strip())
-	recipients = set(entry.workspace.memberships.values_list("user_id", flat=True))
-	if entry.workspace.owner_id:
-		recipients.add(entry.workspace.owner_id)
-	recipients.discard(request.user.id)
-	Notification.objects.bulk_create([
-		Notification(
-			user_id=user_id, workspace=entry.workspace, document=entry, kind="comment",
-			message=f"{request.user.get_username()} commented on {entry.name}.",
-		)
-		for user_id in recipients
-	])
-	return JsonResponse({
-		"id": comment.id, "body": comment.body, "author": _display_name(request.user),
-		"created_at": comment.created_at.isoformat(), "resolved": False,
-	}, status=201)
-
-
-def _member_document(request, workspace_id, file_id):
-	if not _authenticated(request):
-		return None, None, _error("Authentication required.", 401)
-	try:
-		entry = FileEntry.objects.select_related("workspace").get(
-			id=file_id, workspace_id=workspace_id, kind=FileEntry.Kind.FILE
-		)
-	except FileEntry.DoesNotExist:
-		return None, None, _error("Document was not found.", 404)
-	role = _workspace_role(entry.workspace, request.user)
-	if role is None:
-		return None, None, _error("Document was not found.", 404)
-	return entry, role, None
-
-
-@require_http_methods(["GET", "POST"])
-def document_history(request, workspace_id, file_id):
-	entry, role, error = _member_document(request, workspace_id, file_id)
-	if error:
-		return error
-	if request.method == "GET":
-		versions = entry.versions.select_related("author__profile")[:50]
-		return JsonResponse([
-			{"id": version.id, "author": _display_name(version.author) if version.author else "Former user",
-			 "created_at": version.created_at.isoformat()}
-			for version in versions
-		], safe=False)
-	if role == WorkspaceMembership.Role.VIEWER:
-		return _error("Viewer access is read-only.", 403)
-	body = _parse_body(request)
-	content = body.get("content") if body else None
-	if not _valid_content(content):
-		return _error("Version content must be valid JSON under 1 MB.", 400)
-	digest = hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
-	version, created = DocumentVersion.objects.get_or_create(
-		document=entry, content_hash=digest,
-		defaults={"author": request.user, "content": content},
-	)
-	return JsonResponse(
-		{"id": version.id, "created_at": version.created_at.isoformat()},
-		status=201 if created else 200,
-	)
-
-
-@require_http_methods(["GET"])
-def document_version(request, workspace_id, file_id, version_id):
-	entry, _, error = _member_document(request, workspace_id, file_id)
-	if error:
-		return error
-	try:
-		version = entry.versions.get(id=version_id)
-	except DocumentVersion.DoesNotExist:
-		return _error("Document version was not found.", 404)
-	return JsonResponse({"id": version.id, "content": version.content})
-
-
-@require_http_methods(["GET", "POST"])
-def notifications(request):
-	if not _authenticated(request):
-		return _error("Authentication required.", 401)
-	if request.method == "POST":
-		Notification.objects.filter(user=request.user, read_at__isnull=True).update(read_at=timezone.now())
-		return JsonResponse({})
-	return JsonResponse([
-		{"id": item.id, "kind": item.kind, "message": item.message,
-		 "workspace_id": str(item.workspace_id), "document_id": str(item.document_id) if item.document_id else None,
-		 "created_at": item.created_at.isoformat(), "read": item.read_at is not None}
-		for item in request.user.notifications.select_related("workspace", "document")[:50]
-	], safe=False)
 
 
 @require_http_methods(["GET", "POST"])
