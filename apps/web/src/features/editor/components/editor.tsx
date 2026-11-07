@@ -34,6 +34,7 @@ import {
   OnChangeJSON,
 } from "@remirror/react";
 import AIAssistant from "../../ai-assistant/components/ai-assistant";
+import { API_BASE, apiFetch, ensureOk } from "../../../lib/api/client";
 
 export interface Props {
   username: string;
@@ -185,12 +186,6 @@ const EditorSurface: React.FC<EditorSurfaceProps> = ({
   );
 };
 
-const apiBase =
-  import.meta.env.VITE_API_URL ??
-  (window.location.hostname === "localhost"
-    ? "http://localhost:8000"
-    : window.location.origin);
-
 const Editor: React.FC<Props> = (props) => {
   const { fileId, userId, workspaceId, editable = true, onSyncStatusChange } = props;
   const ydoc = useMemo(() => new Y.Doc(), [fileId, userId]);
@@ -199,7 +194,7 @@ const Editor: React.FC<Props> = (props) => {
     [fileId, userId, ydoc]
   );
   const provider = useMemo(() => {
-    const websocketBase = apiBase.replace(/^http/, "ws").replace(/\/$/, "");
+    const websocketBase = API_BASE.replace(/^http/, "ws").replace(/\/$/, "");
     return new WebsocketProvider(`${websocketBase}/ws/editor/${fileId}`, fileId, ydoc, {
       connect: false,
       maxBackoffTime: 10000,
@@ -296,18 +291,11 @@ const Editor: React.FC<Props> = (props) => {
       requesting = true;
       try {
         const method = editable ? "POST" : "GET";
-        const headers = new Headers();
-        if (editable) {
-          const csrfResponse = await fetch(`${apiBase}/api/csrf/`, { credentials: "include" });
-          if (!csrfResponse.ok) throw new Error("Could not establish a secure session.");
-          const { csrfToken } = await csrfResponse.json();
-          headers.set("X-CSRFToken", csrfToken);
-        }
-        const response = await fetch(
-          `${apiBase}/api/workspaces/${workspaceId}/files/${fileId}/initialize/`,
-          { method, headers, credentials: "include" }
+        const response = await apiFetch(
+          `${API_BASE}/api/workspaces/${workspaceId}/files/${fileId}/initialize/`,
+          { method }
         );
-        if (!response.ok) throw new Error("Could not initialize document sync.");
+        await ensureOk(response, "Could not initialize document sync.");
         const result = await response.json();
         if (!active) return;
         initializationErrorReported = false;

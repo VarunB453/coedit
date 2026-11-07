@@ -20,9 +20,6 @@ from modules.shared.http import error, parse_json_object
 from modules.shared.permissions import is_authenticated
 
 
-
-
-
 @require_http_methods(["GET"])
 def csrf_token(request):
     return JsonResponse({"csrfToken": get_token(request)})

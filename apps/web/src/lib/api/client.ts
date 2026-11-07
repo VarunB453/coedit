@@ -32,3 +32,7 @@ export const responseError = async (response: Response, fallback: string): Promi
   }
   return fallback;
 };
+
+export const ensureOk = async (response: Response, fallback: string): Promise<void> => {
+  if (!response.ok) throw new Error(await responseError(response, fallback));
+};

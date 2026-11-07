@@ -51,5 +51,5 @@ export const updateProfile = async (profile: ProfileUpdate): Promise<AuthUser> =
 
 export const endSession = async (): Promise<void> => {
   const response = await apiFetch(`${API_BASE}/api/auth/logout/`, { method: "POST" });
-  if (!response.ok) throw new Error("Could not end the session.");
+  if (!response.ok) throw new Error(await responseError(response, "Could not end the session."));
 };

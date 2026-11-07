@@ -1,5 +1,5 @@
 import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch, API_BASE } from "../lib/api/client";
+import { apiFetch, API_BASE, ensureOk, responseError } from "../lib/api/client";
 import type { AuthMode, AuthUser } from "../features/auth/types";
 import type { CommentInfo, VersionInfo } from "../features/collaboration/types";
 import type { FileEntry, SearchResult } from "../features/documents/types";
@@ -112,8 +112,8 @@ const App = () => {
     const response = await apiFetch(`${API_BASE}/api/share/${encodeURIComponent(token)}/accept/`, {
       method: "POST",
     });
+    await ensureOk(response, "This sharing link is invalid or expired.");
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? "This sharing link is invalid or expired.");
     query.delete("share");
     query.set("workspace", result.workspace_id);
     hashParams.delete("share");
@@ -139,7 +139,7 @@ const App = () => {
           const profile = await getProfile();
           setUser(profile);
           const response = await apiFetch(`${API_BASE}/api/workspaces/`);
-          if (!response.ok) throw new Error("Could not load your workspaces.");
+          await ensureOk(response, "Could not load your workspaces.");
           const loaded = (await response.json()) as WorkspaceInfo[];
           if (!active) return;
           setWorkspaces(loaded);
@@ -147,11 +147,17 @@ const App = () => {
           const chosen = requested ?? loaded[0];
           setWorkspaceId(chosen?.id ?? null);
           const noticeResponse = await apiFetch(`${API_BASE}/api/auth/notifications/`);
-          if (noticeResponse.ok) setNotifications((await noticeResponse.json()) as NotificationInfo[]);
+          if (noticeResponse.ok) {
+            setNotifications((await noticeResponse.json()) as NotificationInfo[]);
+          } else {
+            setLoadError(await responseError(noticeResponse, "Could not load notifications."));
+          }
         }
       })
-      .catch(() => {
-        if (active) setAuthError("Unable to reach the account server. Check your connection and retry.");
+      .catch((error: unknown) => {
+        if (active) {
+          setAuthError(error instanceof Error ? error.message : "Unable to reach the account server. Check your connection and retry.");
+        }
       })
       .finally(() => {
         if (active) setAuthLoading(false);
@@ -172,8 +178,8 @@ const App = () => {
       try {
         const params = new URLSearchParams({ q: searchInput.trim() });
         const response = await apiFetch(`${API_BASE}/api/search/?${params}`);
+        await ensureOk(response, "Search failed.");
         const result = await response.json();
-        if (!response.ok) throw new Error(result.error ?? "Search failed.");
         if (active) {
           setSearchError("");
           setSearchResults(result.results as SearchResult[]);
@@ -197,11 +203,11 @@ const App = () => {
     const refresh = async () => {
       try {
         const response = await apiFetch(`${API_BASE}/api/auth/notifications/`);
-        if (!response.ok) throw new Error("Could not load notifications.");
+        await ensureOk(response, "Could not load notifications.");
         const result = (await response.json()) as NotificationInfo[];
         if (active) setNotifications(result);
-      } catch {
-        if (active) setLoadError("Could not refresh notifications.");
+      } catch (error) {
+        if (active) setLoadError(error instanceof Error ? error.message : "Could not refresh notifications.");
       }
     };
     void refresh();
@@ -224,7 +230,10 @@ const App = () => {
       apiFetch(`${documentUrl}/comments/`),
       apiFetch(`${documentUrl}/history/`),
     ]).then(async ([commentResponse, historyResponse]) => {
-      if (!commentResponse.ok || !historyResponse.ok) throw new Error("Could not load document activity.");
+      await Promise.all([
+        ensureOk(commentResponse, "Could not load document comments."),
+        ensureOk(historyResponse, "Could not load document history."),
+      ]);
       const [loadedComments, loadedVersions] = await Promise.all([
         commentResponse.json() as Promise<CommentInfo[]>,
         historyResponse.json() as Promise<VersionInfo[]>,
@@ -233,8 +242,8 @@ const App = () => {
         setComments(loadedComments);
         setVersions(loadedVersions);
       }
-    }).catch(() => {
-      if (active) setCommentError("Could not load document activity.");
+    }).catch((error: unknown) => {
+      if (active) setCommentError(error instanceof Error ? error.message : "Could not load document activity.");
     });
     return () => { active = false; };
   }, [documentUrl]);
@@ -247,11 +256,13 @@ const App = () => {
     let active = true;
     apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/members/`)
       .then(async (response) => {
-        if (!response.ok) throw new Error("Could not load workspace members.");
+        await ensureOk(response, "Could not load workspace members.");
         return (await response.json()) as MemberInfo[];
       })
       .then((loaded) => { if (active) setMembers(loaded); })
-      .catch(() => { if (active) setInviteError("Could not load workspace members."); });
+      .catch((error: unknown) => {
+        if (active) setInviteError(error instanceof Error ? error.message : "Could not load workspace members.");
+      });
     return () => { active = false; };
   }, [workspaceId, workspaceRole]);
 
@@ -263,11 +274,13 @@ const App = () => {
     let active = true;
     apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/share-links/`)
       .then(async (response) => {
-        if (!response.ok) throw new Error("Could not load sharing links.");
+        await ensureOk(response, "Could not load sharing links.");
         return (await response.json()) as ShareLinkInfo[];
       })
       .then((loaded) => { if (active) setShareLinks(loaded); })
-      .catch(() => { if (active) setShareError("Could not load sharing links."); });
+      .catch((error: unknown) => {
+        if (active) setShareError(error instanceof Error ? error.message : "Could not load sharing links.");
+      });
     return () => { active = false; };
   }, [workspaceId, workspaceRole]);
 
@@ -280,7 +293,7 @@ const App = () => {
     let active = true;
     apiFetch(filesUrl)
       .then(async (response) => {
-        if (!response.ok) throw new Error("Could not load workspace files.");
+        await ensureOk(response, "Could not load workspace files.");
         return (await response.json()) as { role: WorkspaceInfo["role"]; entries: FileEntry[] };
       })
       .then((result) => {
@@ -295,8 +308,10 @@ const App = () => {
         setSelectedId(requestedEntry?.id ?? firstFile?.id ?? null);
         pendingDocumentId.current = null;
       })
-      .catch(() => {
-        if (active) setLoadError("Unable to load this workspace. Check your access and retry.");
+      .catch((error: unknown) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load this workspace. Check your access and retry.");
+        }
       });
     return () => { active = false; };
   }, [filesUrl, user, workspaceId]);
@@ -316,12 +331,10 @@ const App = () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     }).then(async (response) => {
-      if (!response.ok) {
-        const result = await response.json();
-        throw new Error(result.error ?? "Could not save document history.");
-      }
+      await ensureOk(response, "Could not save document history.");
       const history = await apiFetch(`${documentUrl}/history/`);
-      if (history.ok) setVersions((await history.json()) as VersionInfo[]);
+      await ensureOk(history, "Could not refresh document history.");
+      setVersions((await history.json()) as VersionInfo[]);
     }).catch((error: unknown) => {
       setCommentError(error instanceof Error ? error.message : "Could not save document history.");
     });
@@ -388,8 +401,8 @@ const App = () => {
               }
         ),
       });
+      await ensureOk(response, "File operation failed.");
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "File operation failed.");
       if (isRename) {
         setEntries((current) => current.map((entry) => (entry.id === selected.id ? result : entry)));
       } else {
@@ -411,7 +424,7 @@ const App = () => {
     setBusy(true);
     try {
       const response = await apiFetch(`${filesUrl}${selected.id}/`, { method: "DELETE" });
-      if (!response.ok) throw new Error("Delete failed.");
+      await ensureOk(response, "Delete failed.");
       const removedIds = new Set([selected.id]);
       if (selected.kind === "folder") {
         let changed = true;
@@ -427,8 +440,8 @@ const App = () => {
       }
       setEntries((current) => current.filter((entry) => !removedIds.has(entry.id)));
       setSelectedId((current) => (current && removedIds.has(current) ? null : current));
-    } catch {
-      setLoadError("Could not delete this item. Please try again.");
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not delete this item. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -448,14 +461,18 @@ const App = () => {
         setLoadError(error instanceof Error ? error.message : "Could not accept the sharing link.");
       }
       const workspaceResponse = await apiFetch(`${API_BASE}/api/workspaces/`);
-      if (!workspaceResponse.ok) throw new Error("Could not load your workspaces.");
+      await ensureOk(workspaceResponse, "Could not load your workspaces.");
       const loaded = (await workspaceResponse.json()) as WorkspaceInfo[];
       setWorkspaces(loaded);
       const queryWorkspace = new URLSearchParams(window.location.search).get("workspace");
       const selected = loaded.find((workspace) => workspace.id === (sharedWorkspace ?? queryWorkspace)) ?? loaded[0];
       setWorkspaceId(selected?.id ?? null);
       const noticeResponse = await apiFetch(`${API_BASE}/api/auth/notifications/`);
-      if (noticeResponse.ok) setNotifications((await noticeResponse.json()) as NotificationInfo[]);
+      if (noticeResponse.ok) {
+        setNotifications((await noticeResponse.json()) as NotificationInfo[]);
+      } else {
+        setLoadError(await responseError(noticeResponse, "Could not load notifications."));
+      }
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Sign-in failed.");
     }
@@ -470,8 +487,8 @@ const App = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
+      await ensureOk(response, "Could not create workspace.");
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not create workspace.");
       setWorkspaces((current) => [...current, result]);
       setWorkspaceId(result.id);
       setSelectedId(null);
@@ -490,12 +507,13 @@ const App = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: inviteName, role: inviteRole }),
       });
+      await ensureOk(response, "Could not add member.");
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not add member.");
       setInviteName("");
       setInviteError(`Added ${result.username} as ${result.role}.`);
       const membersResponse = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/members/`);
-      if (membersResponse.ok) setMembers((await membersResponse.json()) as MemberInfo[]);
+      await ensureOk(membersResponse, "Could not refresh workspace members.");
+      setMembers((await membersResponse.json()) as MemberInfo[]);
     } catch (error) {
       setInviteError(error instanceof Error ? error.message : "Could not add member.");
     }
@@ -509,8 +527,7 @@ const App = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: member.username, role }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not update member role.");
+      await ensureOk(response, "Could not update member role.");
       setMembers((current) => current.map((item) => item.id === member.id ? { ...item, role } : item));
     } catch (error) {
       setInviteError(error instanceof Error ? error.message : "Could not update member role.");
@@ -527,8 +544,8 @@ const App = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: commentInput }),
       });
+      await ensureOk(response, "Could not post comment.");
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not post comment.");
       setComments((current) => [...current, result as CommentInfo]);
       setCommentInput("");
     } catch (error) {
@@ -545,15 +562,16 @@ const App = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: shareRole, expires_in_days: 7 }),
       });
+      await ensureOk(response, "Could not create sharing link.");
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not create sharing link.");
       const url = new URL(window.location.href);
       url.hash = new URLSearchParams({ share: result.token }).toString();
       setShareLink(url.toString());
       await navigator.clipboard.writeText(url.toString());
       setLinkCopied(true);
       const linksResponse = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/share-links/`);
-      if (linksResponse.ok) setShareLinks((await linksResponse.json()) as ShareLinkInfo[]);
+      await ensureOk(linksResponse, "Could not refresh sharing links.");
+      setShareLinks((await linksResponse.json()) as ShareLinkInfo[]);
     } catch (error) {
       setShareError(error instanceof Error ? error.message : "Could not create sharing link.");
     }
@@ -587,8 +605,8 @@ const App = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: workspaceNameInput }),
       });
+      await ensureOk(response, "Could not rename workspace.");
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not rename workspace.");
       setWorkspaces((current) => current.map((item) => item.id === workspaceId ? { ...item, name: result.name } : item));
       setProfileMessage("Workspace settings saved.");
     } catch (error) {
@@ -597,20 +615,21 @@ const App = () => {
   };
 
   const markNotificationsRead = async () => {
-    const response = await apiFetch(`${API_BASE}/api/auth/notifications/`, { method: "POST" });
-    if (!response.ok) {
-      setLoadError("Could not update notifications.");
-      return;
+    try {
+      const response = await apiFetch(`${API_BASE}/api/auth/notifications/`, { method: "POST" });
+      await ensureOk(response, "Could not update notifications.");
+      setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not update notifications.");
     }
-    setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
   };
 
   const previewVersion = async (versionId: number) => {
     if (!documentUrl) return;
     try {
       const response = await apiFetch(`${documentUrl}/history/${versionId}/`);
+      await ensureOk(response, "Could not load this version.");
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not load this version.");
       const extractText = (node: unknown): string => {
         if (!node || typeof node !== "object") return "";
         const value = node as { text?: unknown; content?: unknown };
@@ -624,12 +643,16 @@ const App = () => {
   };
 
   const signOut = async () => {
-    await endSession();
-    setUser(null);
-    setWorkspaces([]);
-    setWorkspaceId(null);
-    setEntries([]);
-    setNotifications([]);
+    try {
+      await endSession();
+      setUser(null);
+      setWorkspaces([]);
+      setWorkspaceId(null);
+      setEntries([]);
+      setNotifications([]);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not end the session.");
+    }
   };
 
   const selectWorkspace = (id: string) => {
@@ -893,12 +916,13 @@ const App = () => {
                       type="button"
                       className="inline-link danger-text"
                       onClick={async () => {
-                        const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/members/${member.id}/`, { method: "DELETE" });
-                        if (!response.ok) {
-                          setInviteError("Could not remove this workspace member.");
-                          return;
+                        try {
+                          const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/members/${member.id}/`, { method: "DELETE" });
+                          await ensureOk(response, "Could not remove this workspace member.");
+                          setMembers((current) => current.filter((item) => item.id !== member.id));
+                        } catch (error) {
+                          setInviteError(error instanceof Error ? error.message : "Could not remove this workspace member.");
                         }
-                        setMembers((current) => current.filter((item) => item.id !== member.id));
                       }}
                     >
                       Remove
@@ -919,12 +943,13 @@ const App = () => {
                     className="inline-link danger-text"
                     onClick={async () => {
                       if (!workspaceId) return;
-                      const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/share-links/${link.id}/`, { method: "DELETE" });
-                      if (!response.ok) {
-                        setShareError("Could not revoke this invite link.");
-                        return;
+                      try {
+                        const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/share-links/${link.id}/`, { method: "DELETE" });
+                        await ensureOk(response, "Could not revoke this invite link.");
+                        setShareLinks((current) => current.filter((item) => item.id !== link.id));
+                      } catch (error) {
+                        setShareError(error instanceof Error ? error.message : "Could not revoke this invite link.");
                       }
-                      setShareLinks((current) => current.filter((item) => item.id !== link.id));
                     }}
                   >
                     Revoke
