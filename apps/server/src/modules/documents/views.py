@@ -9,7 +9,13 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
-from editor.models import FileEntry, Workspace, WorkspaceMembership, empty_document
+from editor.models import (
+    DocumentSnapshot,
+    FileEntry,
+    Workspace,
+    WorkspaceMembership,
+    empty_document,
+)
 from modules.shared.http import error as _error, parse_json_object
 from modules.shared.permissions import is_authenticated as _authenticated
 from modules.shared.permissions import workspace_role as _workspace_role
@@ -69,7 +75,9 @@ def document_initialization(request, workspace_id, file_id):
 
     with transaction.atomic():
         entry = FileEntry.objects.select_for_update().get(id=entry.id)
-        if entry.yjs_updates.exists():
+        if entry.yjs_updates.exists() or DocumentSnapshot.objects.filter(
+            document=entry
+        ).exists():
             return JsonResponse({"ready": True, "initialize": False})
         if entry.content == empty_document():
             return JsonResponse({"ready": True, "initialize": False})

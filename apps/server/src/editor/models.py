@@ -91,6 +91,16 @@ class DocumentUpdate(models.Model):
 		]
 
 
+class DocumentSnapshot(models.Model):
+	document = models.OneToOneField(
+		FileEntry, on_delete=models.CASCADE, primary_key=True, related_name="yjs_snapshot"
+	)
+	state = models.BinaryField()
+	state_vector = models.BinaryField()
+	compacted_through_id = models.PositiveBigIntegerField(default=0)
+	updated_at = models.DateTimeField(auto_now=True)
+
+
 class UserProfile(models.Model):
 	user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
 	display_name = models.CharField(max_length=100, blank=True)

@@ -11,12 +11,43 @@ from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from editor.models import (
-    DocumentUpdate, FileEntry, Notification, Workspace, WorkspaceMembership,
+    DocumentSnapshot, DocumentUpdate, FileEntry, Notification, Workspace, WorkspaceMembership,
     WorkspaceShareLink, UserProfile,
 )
 from editor.ai import build_messages, stream_completion
-from editor.socket.consumers import MAX_WEBSOCKET_MESSAGE_BYTES, EditorConsumer
+from editor.socket.consumers import (
+    MAX_WEBSOCKET_MESSAGE_BYTES,
+    UPDATE_COMPACTION_THRESHOLD,
+    UPDATE_RETENTION_LIMIT,
+    EditorConsumer,
+    _read_var_bytes,
+    _read_var_uint,
+    _sync_message,
+)
 from editor.socket.routing import websocket_urlpatterns
+from y_py import YDoc, apply_update, encode_state_as_update, encode_state_vector
+
+
+def _yjs_update(text, client_id=None):
+    document = YDoc(client_id=client_id) if client_id is not None else YDoc()
+    with document.begin_transaction() as transaction:
+        document.get_text("content").insert(transaction, 0, text)
+    return bytes(encode_state_as_update(document))
+
+
+def _yjs_text(update):
+    document = YDoc()
+    apply_update(document, update)
+    return str(document.get_text("content"))
+
+
+def _sync_payload(frame, expected_type):
+    message_type, offset = _read_var_uint(frame, 0)
+    sync_type, offset = _read_var_uint(frame, offset)
+    payload, end = _read_var_bytes(frame, offset)
+    if message_type != 0 or sync_type != expected_type or end != len(frame):
+        raise AssertionError("Unexpected Yjs sync frame")
+    return payload
 
 
 class WorkspaceFileApiTests(TestCase):
@@ -528,8 +559,8 @@ class DurableCollaborationTests(TransactionTestCase):
         return consumer
 
     def test_duplicate_updates_are_deduplicated_and_recoverable_after_consumer_restart(self):
-        update = b"durable-yjs-update"
-        concurrent_update = b"second-concurrent-update"
+        update = _yjs_update("durable-", client_id=1)
+        concurrent_update = _yjs_update("concurrent", client_id=2)
 
         async def persist_concurrently():
             consumers = [self.consumer(self.owner) for _ in range(3)]
@@ -544,8 +575,44 @@ class DurableCollaborationTests(TransactionTestCase):
         self.assertEqual(DocumentUpdate.objects.filter(document=self.document).count(), 2)
 
         connection.close()
-        recovered = async_to_sync(self.consumer(self.owner)._load_updates)()
-        self.assertEqual({bytes(value) for value in recovered}, {update, concurrent_update})
+        state_update, _ = async_to_sync(
+            self.consumer(self.owner)._load_sync_state(encode_state_vector(YDoc()))
+        )()
+        recovered_text = _yjs_text(state_update)
+        self.assertIn("durable-", recovered_text)
+        self.assertIn("concurrent", recovered_text)
+
+    def test_compaction_keeps_consistent_snapshot_and_bounded_update_history(self):
+        updates = [
+            _yjs_update(f"{index},", client_id=index + 10)
+            for index in range(UPDATE_COMPACTION_THRESHOLD + 1)
+        ]
+        consumer = self.consumer(self.owner)
+
+        async def persist_updates():
+            return [
+                await consumer._persist_update(update)
+                for update in updates
+            ]
+
+        self.assertEqual(sum(async_to_sync(persist_updates)()), len(updates))
+        snapshot = DocumentSnapshot.objects.get(document=self.document)
+        self.assertEqual(
+            DocumentUpdate.objects.filter(document=self.document).count(),
+            UPDATE_RETENTION_LIMIT + 1,
+        )
+
+        state_update, _ = async_to_sync(
+            consumer._load_sync_state(encode_state_vector(YDoc()))
+        )()
+        recovered_text = _yjs_text(state_update)
+        self.assertEqual(
+            {part for part in recovered_text.split(",") if part},
+            {str(index) for index in range(len(updates))},
+        )
+        self.assertLess(snapshot.compacted_through_id, max(
+            DocumentUpdate.objects.filter(document=self.document).values_list("id", flat=True)
+        ))
 
     def authenticated_app(self, user):
         inner = URLRouter(websocket_urlpatterns)
@@ -568,7 +635,8 @@ class DurableCollaborationTests(TransactionTestCase):
             connected = [await communicator.connect() for communicator in (first, second, isolated)]
             self.assertTrue(all(result[0] for result in connected))
 
-            frame = b"\x00\x02\x01x"
+            update = _yjs_update("shared text", client_id=1)
+            frame = _sync_message(2, update)
             await first.send_to(bytes_data=frame)
             received = await second.receive_from(timeout=1)
             self.assertEqual(received, frame)
@@ -579,7 +647,7 @@ class DurableCollaborationTests(TransactionTestCase):
             )
             viewer_connected, _ = await viewer.connect()
             self.assertTrue(viewer_connected)
-            await viewer.send_to(bytes_data=b"\x00\x02\x01v")
+            await viewer.send_to(bytes_data=_sync_message(2, _yjs_update("denied")))
             await asyncio.sleep(0)
 
             for communicator in (first, second, isolated, viewer):
@@ -590,12 +658,38 @@ class DurableCollaborationTests(TransactionTestCase):
             )
             connected, _ = await reconnected.connect()
             self.assertTrue(connected)
-            await reconnected.send_to(bytes_data=b"\x00\x00\x01\x00")
-            self.assertEqual(await reconnected.receive_from(timeout=1), frame)
+            offline_document = YDoc(client_id=30)
+            with offline_document.begin_transaction() as transaction:
+                offline_document.get_text("content").insert(
+                    transaction, 0, "offline text"
+                )
+            await reconnected.send_to(
+                bytes_data=_sync_message(
+                    0, encode_state_vector(offline_document)
+                )
+            )
+            server_update = await reconnected.receive_from(timeout=1)
+            server_state_vector = await reconnected.receive_from(timeout=1)
+            server_update_payload = _sync_payload(server_update, expected_type=1)
+            server_state_vector_payload = _sync_payload(
+                server_state_vector, expected_type=0
+            )
+            apply_update(offline_document, server_update_payload)
+            self.assertIn("shared text", str(offline_document.get_text("content")))
+            self.assertIn("offline text", str(offline_document.get_text("content")))
+            await reconnected.send_to(
+                bytes_data=_sync_message(
+                    1,
+                    encode_state_as_update(
+                        offline_document, server_state_vector_payload
+                    ),
+                )
+            )
+            await asyncio.sleep(0.05)
             await reconnected.disconnect()
 
         async_to_sync(exercise_rooms)()
-        self.assertEqual(DocumentUpdate.objects.filter(document=self.document).count(), 1)
+        self.assertEqual(DocumentUpdate.objects.filter(document=self.document).count(), 2)
         self.assertEqual(DocumentUpdate.objects.filter(document=self.other_document).count(), 0)
 
     def test_websocket_rejects_nonmembers_and_untrusted_origins(self):
@@ -636,7 +730,9 @@ class DurableCollaborationTests(TransactionTestCase):
 
             membership.role = WorkspaceMembership.Role.VIEWER
             await sync_to_async(membership.save)(update_fields=["role"])
-            await communicator.send_to(bytes_data=b"\x00\x02\x01v")
+            await communicator.send_to(
+                bytes_data=_sync_message(2, _yjs_update("denied"))
+            )
             self.assertTrue(await communicator.receive_nothing(timeout=0.1))
             update_count = await sync_to_async(
                 lambda: DocumentUpdate.objects.filter(document=self.document).count()

@@ -202,7 +202,9 @@ const Editor: React.FC<Props> = (props) => {
   }, [fileId, ydoc]);
   const [seedContent, setSeedContent] = useState<boolean | null>(null);
   const [presence, setPresence] = useState<PresenceUser[]>([]);
+  const [accessRevoked, setAccessRevoked] = useState(false);
   const localPersistenceFailed = useRef(false);
+  const accessRevokedRef = useRef(false);
 
   useEffect(() => {
     provider.awareness.setLocalStateField("user", {
@@ -227,20 +229,34 @@ const Editor: React.FC<Props> = (props) => {
     };
     const onStatus = ({ status }: { status: string }) => {
       onSyncStatusChange?.(
-        status === "connected" ? "connecting" : localPersistenceFailed.current ? "error" : "offline"
+        accessRevokedRef.current || localPersistenceFailed.current
+          ? "error"
+          : status === "connected"
+            ? "connecting"
+            : "offline"
       );
     };
     const onSync = (synced: boolean) => {
       onSyncStatusChange?.(synced ? "synced" : "connecting");
     };
+    const onConnectionClose = (event: CloseEvent) => {
+      if (event.code === 4403) {
+        accessRevokedRef.current = true;
+        setAccessRevoked(true);
+        onSyncStatusChange?.("error");
+        provider.disconnect();
+      }
+    };
     provider.awareness.on("change", updatePresence);
     provider.on("status", onStatus);
     provider.on("sync", onSync);
+    provider.on("connection-close", onConnectionClose);
     updatePresence();
     return () => {
       provider.awareness.off("change", updatePresence);
       provider.off("status", onStatus);
       provider.off("sync", onSync);
+      provider.off("connection-close", onConnectionClose);
       provider.destroy();
       void persistence
         .destroy()
@@ -255,7 +271,7 @@ const Editor: React.FC<Props> = (props) => {
       if (!active) return;
       if (!navigator.onLine) {
         onSyncStatusChange?.("offline");
-        setSeedContent((current) => current ?? (ydoc.share.size === 0));
+        setSeedContent((current) => current ?? false);
       } else {
         onSyncStatusChange?.("connecting");
       }
@@ -266,7 +282,7 @@ const Editor: React.FC<Props> = (props) => {
       if (active) {
         localPersistenceFailed.current = true;
         onSyncStatusChange?.("error");
-        setSeedContent((current) => current ?? (ydoc.share.size === 0));
+        setSeedContent((current) => current ?? false);
         provider.connect();
       }
     });
@@ -283,9 +299,9 @@ const Editor: React.FC<Props> = (props) => {
     let retryTimer = 0;
 
     const requestInitialization = async () => {
-      if (!active || complete || requesting) return;
+      if (!active || complete || requesting || accessRevoked) return;
       if (!navigator.onLine) {
-        setSeedContent((current) => current ?? (ydoc.share.size === 0));
+        setSeedContent((current) => current ?? false);
         return;
       }
       requesting = true;
@@ -314,7 +330,7 @@ const Editor: React.FC<Props> = (props) => {
           initializationErrorReported = true;
         }
         if (active) {
-          setSeedContent((current) => current ?? (ydoc.share.size === 0));
+          setSeedContent((current) => current ?? false);
           retryTimer = window.setTimeout(requestInitialization, 2000);
         }
       } finally {
@@ -326,11 +342,12 @@ const Editor: React.FC<Props> = (props) => {
       if (synced) void requestInitialization();
     };
     const onOffline = () => {
-      setSeedContent((current) => current ?? (ydoc.share.size === 0));
+      setSeedContent((current) => current ?? false);
       onSyncStatusChange?.(localPersistenceFailed.current ? "error" : "offline");
     };
     const onOnline = () => {
       onSyncStatusChange?.("connecting");
+      provider.connect();
       if (provider.synced) void requestInitialization();
     };
     provider.on("sync", onSync);
@@ -347,7 +364,7 @@ const Editor: React.FC<Props> = (props) => {
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
     };
-  }, [editable, fileId, onSyncStatusChange, persistence, provider, workspaceId, ydoc]);
+  }, [accessRevoked, editable, fileId, onSyncStatusChange, persistence, provider, workspaceId, ydoc]);
 
   if (seedContent === null) {
     return <p className="editor-loading">Waiting for document sync…</p>;
@@ -358,6 +375,7 @@ const Editor: React.FC<Props> = (props) => {
       {...props}
       provider={provider}
       seedContent={seedContent}
+      editable={editable && !accessRevoked}
       presence={presence}
     />
   );
