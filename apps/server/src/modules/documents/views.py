@@ -13,7 +13,7 @@ from editor.models import FileEntry, Workspace, WorkspaceMembership, empty_docum
 from modules.shared.http import error as _error, parse_json_object
 from modules.shared.permissions import is_authenticated as _authenticated
 from modules.shared.permissions import workspace_role as _workspace_role
-from modules.shared.validation import MAX_NAME_LENGTH, validate_name
+from modules.shared.validation import validate_name
 
 MAX_CONTENT_BYTES = 1_000_000
 

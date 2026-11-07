@@ -20,8 +20,7 @@ from modules.shared.http import error, parse_json_object
 from modules.shared.permissions import is_authenticated
 
 
-def _parse_body(request):
-    return parse_json_object(request)
+
 
 
 @require_http_methods(["GET"])
@@ -50,7 +49,7 @@ def auth_session(request):
         if not is_authenticated(request):
             return error("Authentication required.", 401)
         return JsonResponse(user_payload(request.user))
-    body = _parse_body(request)
+    body = parse_json_object(request)
     if body is None:
         return error("Request body must be a JSON object.", 400)
     username = body.get("username", "")
@@ -70,7 +69,7 @@ def auth_profile(request):
         return error("Authentication required.", 401)
     if request.method == "GET":
         return JsonResponse(user_payload(request.user))
-    body = _parse_body(request)
+    body = parse_json_object(request)
     if body is None:
         return error("Request body must be a JSON object.", 400)
     allowed = {"display_name", "email", "current_password", "new_password"}
@@ -122,7 +121,7 @@ def auth_profile(request):
 
 @require_http_methods(["POST"])
 def register(request):
-    body = _parse_body(request)
+    body = parse_json_object(request)
     if body is None:
         return error("Request body must be a JSON object.", 400)
     username = body.get("username")
