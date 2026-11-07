@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useCommands, useEditorView } from "@remirror/react";
+import { API_BASE, apiFetch, responseError } from "../../../lib/api/client";
 
 type Props = {
   workspaceId: string;
@@ -12,10 +13,6 @@ type Props = {
 type Provider = { id: string; model: string };
 type Action = "chat" | "summarize" | "grammar" | "rewrite" | "generate" | "insights" | "semantic_search" | "edit";
 type Message = { role: "user" | "assistant"; content: string };
-
-const apiBase =
-  import.meta.env.VITE_API_URL ??
-  (window.location.hostname === "localhost" ? "http://localhost:8000" : window.location.origin);
 
 const actionLabels: Record<Action, string> = {
   chat: "Ask AI",
@@ -57,9 +54,11 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
 
   useEffect(() => {
     let active = true;
-    fetch(`${apiBase}/api/ai/providers/`, { credentials: "include" })
+    apiFetch(`${API_BASE}/api/ai/providers/`)
       .then(async (response) => {
-        if (!response.ok) throw new Error("Could not load AI provider settings.");
+        if (!response.ok) {
+          throw new Error(await responseError(response, "Could not load AI provider settings."));
+        }
         return (await response.json()) as { providers: Provider[] };
       })
       .then((result) => {
@@ -92,16 +91,12 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
     let accumulated = "";
 
     try {
-      const csrfResponse = await fetch(`${apiBase}/api/csrf/`, { credentials: "include" });
-      if (!csrfResponse.ok) throw new Error("Could not establish a secure session.");
-      const { csrfToken } = (await csrfResponse.json()) as { csrfToken: string };
-      const response = await fetch(
-        `${apiBase}/api/workspaces/${workspaceId}/files/${fileId}/ai/`,
+      const response = await apiFetch(
+        `${API_BASE}/api/workspaces/${workspaceId}/files/${fileId}/ai/`,
         {
           method: "POST",
-          credentials: "include",
           signal: abortController.signal,
-          headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             provider: providerId,
             action,
@@ -113,8 +108,7 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
         }
       );
       if (!response.ok) {
-        const result = await response.json().catch(() => ({}));
-        throw new Error(result.error ?? "AI request failed.");
+        throw new Error(await responseError(response, "AI request failed."));
       }
       if (!response.body) throw new Error("Streaming is not supported by this connection.");
       const reader = response.body.getReader();

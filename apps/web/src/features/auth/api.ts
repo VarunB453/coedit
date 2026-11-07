@@ -1,4 +1,4 @@
-import { API_BASE, apiFetch } from "../../lib/api/client";
+import { API_BASE, apiFetch, responseError } from "../../lib/api/client";
 import type { AuthMode, AuthUser } from "./types";
 
 export interface ProfileUpdate {
@@ -9,18 +9,14 @@ export interface ProfileUpdate {
 }
 
 const parseResponse = async <T>(response: Response, fallback: string): Promise<T> => {
-  const payload = (await response.json()) as T & { error?: unknown };
-  if (!response.ok) {
-    throw new Error(typeof payload.error === "string" ? payload.error : fallback);
-  }
-  return payload;
+  if (!response.ok) throw new Error(await responseError(response, fallback));
+  return (await response.json()) as T;
 };
 
 export const getSession = async (): Promise<AuthUser | null> => {
   const response = await apiFetch(`${API_BASE}/api/auth/session/`);
   if (response.status === 401) return null;
-  if (!response.ok) throw new Error("Could not verify session.");
-  return (await response.json()) as AuthUser;
+  return parseResponse<AuthUser>(response, "Could not verify session.");
 };
 
 export const getProfile = async (): Promise<AuthUser> => {

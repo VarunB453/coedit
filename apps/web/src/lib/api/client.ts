@@ -15,3 +15,20 @@ export const apiFetch = async (url: string, options: RequestInit = {}): Promise<
   }
   return fetch(url, { ...options, headers, credentials: "include" });
 };
+
+export const responseError = async (response: Response, fallback: string): Promise<string> => {
+  try {
+    const payload: unknown = await response.json();
+    if (
+      typeof payload === "object" &&
+      payload !== null &&
+      "error" in payload &&
+      typeof payload.error === "string"
+    ) {
+      return payload.error;
+    }
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  return fallback;
+};
