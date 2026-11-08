@@ -93,6 +93,7 @@ def retrieve_workspace_context(workspace_id, query, limit=MAX_SOURCES):
                     "name": document["name"],
                     "text": chunk,
                     "tokens": tokens,
+                    "terms": set(tokens),
                 })
 
     query_tokens = TOKEN_PATTERN.findall(query.lower())
@@ -100,12 +101,10 @@ def retrieve_workspace_context(workspace_id, query, limit=MAX_SOURCES):
     if not query_terms or not passages:
         return []
 
-    document_frequency = Counter(
-        term
+    document_frequency = Counter({
+        term: sum(term in passage["terms"] for passage in passages)
         for term in query_terms
-        for passage in passages
-        if term in set(passage["tokens"])
-    )
+    })
     average_length = sum(len(passage["tokens"]) for passage in passages) / len(passages)
     query_phrase = " ".join(query_tokens)
     ranked = []
