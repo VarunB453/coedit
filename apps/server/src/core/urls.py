@@ -29,6 +29,8 @@ urlpatterns = [
     path('api/search/', editor_views.search_documents),
     path('api/share/<str:token>/accept/', editor_views.accept_share_link),
     path('api/ai/providers/', editor_views.ai_providers),
+    path('api/ai/usage/', editor_views.ai_usage),
+    path('api/workspaces/<uuid:workspace_id>/files/<uuid:file_id>/ai/conversation/', editor_views.ai_conversation),
     path('api/workspaces/<uuid:workspace_id>/files/<uuid:file_id>/ai/', editor_views.ai_completion),
     path('api/workspaces/', editor_views.workspaces),
     path('api/workspaces/<uuid:workspace_id>/', editor_views.workspace_detail),

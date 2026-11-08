@@ -38,5 +38,13 @@ def ai_providers(request):
     return ai_views.ai_providers(request)
 
 
+def ai_usage(request):
+    return ai_views.ai_usage(request)
+
+
+def ai_conversation(request, workspace_id, file_id):
+    return ai_views.ai_conversation(request, workspace_id, file_id)
+
+
 def ai_completion(request, workspace_id, file_id):
     return ai_views.ai_completion(request, workspace_id, file_id, stream_completion)

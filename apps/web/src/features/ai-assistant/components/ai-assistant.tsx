@@ -11,8 +11,15 @@ type Props = {
 };
 
 type Provider = { id: string; model: string };
-type Action = "chat" | "summarize" | "grammar" | "rewrite" | "generate" | "insights" | "semantic_search" | "edit";
+type Action = "chat" | "summarize" | "grammar" | "rewrite" | "generate" | "insights" | "semantic_search" | "workspace_search" | "edit";
 type Message = { role: "user" | "assistant"; content: string };
+type Source = { document_id: string; name: string; excerpt: string };
+type Usage = {
+  requests_today: number;
+  daily_request_limit: number;
+  remaining_requests: number;
+  output_characters_today: number;
+};
 
 const actionLabels: Record<Action, string> = {
   chat: "Ask AI",
@@ -22,6 +29,7 @@ const actionLabels: Record<Action, string> = {
   generate: "Generate",
   insights: "Insights",
   semantic_search: "Search document",
+  workspace_search: "Search workspace",
   edit: "Edit with instructions",
 };
 
@@ -34,6 +42,8 @@ const textToDocument = (text: string) => ({
 });
 
 const AI_ASSISTABLE_ACTIONS: Action[] = ["grammar", "rewrite", "generate", "edit"];
+const conversationUrl = (workspaceId: string, fileId: string) =>
+  `${API_BASE}/api/workspaces/${workspaceId}/files/${fileId}/ai/conversation/`;
 
 const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, editable }) => {
   const [open, setOpen] = useState(false);
@@ -45,6 +55,9 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
   const [outputAction, setOutputAction] = useState<Action | null>(null);
   const [sourceSnapshot, setSourceSnapshot] = useState("");
   const [history, setHistory] = useState<Message[]>([]);
+  const [conversationLoaded, setConversationLoaded] = useState(false);
+  const [sources, setSources] = useState<Source[]>([]);
+  const [usage, setUsage] = useState<Usage | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [stale, setStale] = useState(false);
@@ -75,16 +88,54 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    setConversationLoaded(false);
+    setHistory([]);
+    apiFetch(conversationUrl(workspaceId, fileId))
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(await responseError(response, "Could not load this document's AI conversation."));
+        }
+        return (await response.json()) as { messages: Message[] };
+      })
+      .then((result) => {
+        if (active) setHistory(result.messages);
+      })
+      .catch((loadError: unknown) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : "Could not load this document's AI conversation.");
+      })
+      .finally(() => {
+        if (active) setConversationLoaded(true);
+      });
+    apiFetch(`${API_BASE}/api/ai/usage/`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(await responseError(response, "Could not load AI usage."));
+        }
+        return (await response.json()) as Usage;
+      })
+      .then((result) => {
+        if (active) setUsage(result);
+      })
+      .catch((loadError: unknown) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : "Could not load AI usage.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [fileId, workspaceId]);
+
   const runAction = async (action: Action, instruction = prompt.trim()) => {
-    if (!providerId || busy) return;
+    if (!providerId || busy || (action === "chat" && !conversationLoaded)) return;
     const context = view.state.doc.textBetween(0, view.state.doc.content.size, "\n\n");
     const snapshot = JSON.stringify(view.state.doc.toJSON());
-    const nextHistory = action === "chat" ? history.slice(-10) : [];
     setBusy(true);
     setError("");
     setStale(false);
     setOutput("");
     setOutputAction(action);
+    setSources([]);
     if (AI_ASSISTABLE_ACTIONS.includes(action)) setSourceSnapshot(snapshot);
     const abortController = new AbortController();
     controller.current = abortController;
@@ -101,15 +152,19 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
             provider: providerId,
             action,
             document_name: documentName,
-            context,
+            context: action === "workspace_search" ? "" : context,
             prompt: instruction,
-            history: nextHistory,
           }),
         }
       );
       if (!response.ok) {
         throw new Error(await responseError(response, "AI request failed."));
       }
+      setUsage((current) => current ? ({
+        ...current,
+        requests_today: current.requests_today + 1,
+        remaining_requests: Math.max(0, current.remaining_requests - 1),
+      }) : current);
       if (!response.body) throw new Error("Streaming is not supported by this connection.");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -122,11 +177,13 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
         buffer = events.pop() ?? "";
         for (const event of events) {
           const lines = event.split("\n");
+          const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
           const isError = lines.some((line) => line === "event: error");
           const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
           if (!data) continue;
-          const payload = JSON.parse(data) as { text?: string; done?: boolean; error?: string };
+          const payload = JSON.parse(data) as { text?: string; done?: boolean; error?: string; sources?: Source[] };
           if (isError) throw new Error(payload.error ?? "AI request failed.");
+          if (eventName === "sources" && payload.sources) setSources(payload.sources);
           if (payload.text) {
             accumulated += payload.text;
             setOutput(accumulated);
@@ -136,6 +193,10 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
         if (done) streamComplete = true;
       }
       if (!accumulated.trim()) throw new Error("The AI provider returned an empty response.");
+      setUsage((current) => current ? ({
+        ...current,
+        output_characters_today: current.output_characters_today + accumulated.length,
+      }) : current);
       if (action === "chat") {
         setHistory((current) => [
           ...current,
@@ -155,6 +216,20 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
     } finally {
       if (controller.current === abortController) controller.current = null;
       setBusy(false);
+    }
+  };
+
+  const clearChat = async () => {
+    if (busy) return;
+    try {
+      const response = await apiFetch(conversationUrl(workspaceId, fileId), { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error(await responseError(response, "Could not clear this conversation."));
+      }
+      setHistory([]);
+      setError("");
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : "Could not clear this conversation.");
     }
   };
 
@@ -208,14 +283,14 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
                 {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.id} · {provider.model}</option>)}
               </select>
               <div className="ai-action-grid">
-                {(["summarize", "grammar", "rewrite", "generate", "insights", "semantic_search"] as Action[]).map((action) => (
+                {(["summarize", "grammar", "rewrite", "generate", "insights", "semantic_search", "workspace_search"] as Action[]).map((action) => (
                   <button
                     key={action}
                     type="button"
                     disabled={
                       busy ||
                       (!editable && ["grammar", "rewrite", "generate"].includes(action)) ||
-                      (["generate", "semantic_search"].includes(action) && !prompt.trim())
+                      (["generate", "semantic_search", "workspace_search"].includes(action) && !prompt.trim())
                     }
                     onClick={() => void runAction(
                       action,
@@ -245,7 +320,7 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
                   {busy ? (
                     <button type="button" className="ai-send-button" onClick={() => controller.current?.abort()}>Stop</button>
                   ) : (
-                    <button type="submit" className="ai-send-button" disabled={!prompt.trim()}>Ask AI</button>
+                    <button type="submit" className="ai-send-button" disabled={!prompt.trim() || !conversationLoaded}>Ask AI</button>
                   )}
                 </div>
               </form>
@@ -266,6 +341,17 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
                     <strong>{outputAction ? actionLabels[outputAction] : "AI response"}</strong>
                     <button type="button" onClick={() => { setOutput(""); setOutputAction(null); setStale(false); }}>Discard</button>
                   </div>
+                  {sources.length > 0 && (
+                    <div className="ai-sources">
+                      <strong>Sources</strong>
+                      {sources.map((source) => (
+                        <p key={`${source.document_id}-${source.excerpt}`}>
+                          <span>{source.name}</span>
+                          <small>{source.excerpt}</small>
+                        </p>
+                      ))}
+                    </div>
+                  )}
                   <pre>{output}</pre>
                   {outputAction && AI_ASSISTABLE_ACTIONS.includes(outputAction) && (
                     <>
@@ -281,8 +367,13 @@ const AIAssistant: React.FC<Props> = ({ workspaceId, fileId, documentName, edita
               {history.length > 0 && !output && (
                 <div className="ai-chat-context" aria-live="polite">
                   <span>{history.filter((message) => message.role === "user").length} recent chat messages in context</span>
-                  <button type="button" onClick={() => setHistory([])}>Clear chat</button>
+                  <button type="button" disabled={busy} onClick={() => void clearChat()}>Clear chat</button>
                 </div>
+              )}
+              {usage && (
+                <p className="ai-usage" aria-live="polite">
+                  {usage.remaining_requests} of {usage.daily_request_limit} AI requests left today
+                </p>
               )}
             </>
           )}
