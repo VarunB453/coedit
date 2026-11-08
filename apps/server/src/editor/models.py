@@ -154,6 +154,45 @@ class DocumentVersion(models.Model):
 		]
 
 
+class AIConversation(models.Model):
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="ai_conversations")
+	workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="ai_conversations")
+	document = models.ForeignKey(FileEntry, on_delete=models.CASCADE, related_name="ai_conversations")
+	messages = models.JSONField(default=list, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		constraints = [
+			models.UniqueConstraint(fields=("user", "document"), name="uniq_ai_conversation_user_doc")
+		]
+
+
+class AIUsage(models.Model):
+	class Status(models.TextChoices):
+		PENDING = "pending", "Pending"
+		COMPLETED = "completed", "Completed"
+		FAILED = "failed", "Failed"
+		CANCELLED = "cancelled", "Cancelled"
+
+	user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="ai_usage")
+	workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="ai_usage")
+	document = models.ForeignKey(FileEntry, on_delete=models.CASCADE, related_name="ai_usage")
+	provider = models.CharField(max_length=20)
+	model = models.CharField(max_length=100)
+	status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+	input_characters = models.PositiveIntegerField(default=0)
+	output_characters = models.PositiveIntegerField(default=0)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		indexes = [
+			models.Index(fields=("user", "created_at"), name="ai_usage_user_time_idx"),
+			models.Index(fields=("workspace", "created_at"), name="ai_usage_ws_time_idx"),
+		]
+
+
 class Notification(models.Model):
 	user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
 	workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="notifications")
