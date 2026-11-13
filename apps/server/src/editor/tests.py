@@ -768,3 +768,18 @@ class DurableCollaborationTests(TransactionTestCase):
             await communicator.disconnect()
 
         async_to_sync(exercise_limit)()
+
+    def test_invalid_yjs_updates_are_closed(self):
+        async def exercise_invalid_update():
+            communicator = WebsocketCommunicator(
+                self.authenticated_app(self.owner), f"/ws/editor/{self.document.id}"
+            )
+            connected, _ = await communicator.connect()
+            self.assertTrue(connected)
+            await communicator.send_to(bytes_data=_sync_message(2, b"invalid"))
+            close_message = await communicator.receive_output(timeout=1)
+            self.assertEqual(close_message["type"], "websocket.close")
+            self.assertEqual(close_message["code"], 4400)
+            await communicator.disconnect()
+
+        async_to_sync(exercise_invalid_update)()

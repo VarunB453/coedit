@@ -5,7 +5,6 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.auth.models import AnonymousUser
 from django.db import IntegrityError, transaction
 from y_py import (
-    EncodingException,
     YDoc,
     apply_update,
     encode_state_as_update,
@@ -23,6 +22,24 @@ from editor.models import (
 MAX_WEBSOCKET_MESSAGE_BYTES = 1_000_000
 UPDATE_COMPACTION_THRESHOLD = 100
 UPDATE_RETENTION_LIMIT = 100
+
+
+def _apply_yjs_update(document, update):
+    try:
+        apply_update(document, update)
+    except Exception as error:
+        if type(error).__module__ != "y_py" or type(error).__name__ != "EncodingException":
+            raise
+        raise ValueError("Invalid Yjs update") from error
+
+
+def _encode_yjs_state(document, state_vector, error_message):
+    try:
+        return encode_state_as_update(document, state_vector)
+    except Exception as error:
+        if type(error).__module__ != "y_py" or type(error).__name__ != "EncodingException":
+            raise
+        raise ValueError(error_message) from error
 
 
 def _read_var_uint(data, offset):
@@ -106,10 +123,7 @@ class EditorConsumer(AsyncWebsocketConsumer):
                 elif sync_type in (1, 2):
                     if self.role == WorkspaceMembership.Role.VIEWER:
                         return
-                    try:
-                        apply_update(YDoc(), payload)
-                    except EncodingException as exception:
-                        raise ValueError("Invalid Yjs update") from exception
+                    _apply_yjs_update(YDoc(), payload)
                     created = await self._persist_update(payload)
                     if created:
                         await self.channel_layer.group_send(
@@ -150,7 +164,7 @@ class EditorConsumer(AsyncWebsocketConsumer):
                 return
 
             raise ValueError("Unsupported Yjs message")
-        except (EncodingException, ValueError):
+        except ValueError:
             await self.close(code=4400)
 
     async def editor_message(self, event):
@@ -177,10 +191,7 @@ class EditorConsumer(AsyncWebsocketConsumer):
         return True
 
     async def _send_sync_state(self, state_vector):
-        try:
-            state_update, server_state_vector = await self._load_sync_state(state_vector)
-        except EncodingException as exception:
-            raise ValueError("Invalid Yjs state vector") from exception
+        state_update, server_state_vector = await self._load_sync_state(state_vector)
         await self.send(bytes_data=_sync_message(1, state_update))
         await self.send(bytes_data=_sync_message(0, server_state_vector))
 
@@ -241,12 +252,12 @@ class EditorConsumer(AsyncWebsocketConsumer):
         document = YDoc()
         compacted_through_id = 0
         if snapshot is not None:
-            apply_update(document, bytes(snapshot.state))
+            _apply_yjs_update(document, bytes(snapshot.state))
             compacted_through_id = snapshot.compacted_through_id
 
         updates = list(pending.order_by("id").values_list("id", "update"))
         for update_id, update in updates:
-            apply_update(document, bytes(update))
+            _apply_yjs_update(document, bytes(update))
             compacted_through_id = update_id
 
         DocumentSnapshot.objects.update_or_create(
@@ -270,14 +281,14 @@ class EditorConsumer(AsyncWebsocketConsumer):
         document = YDoc()
         compacted_through_id = 0
         if snapshot is not None:
-            apply_update(document, bytes(snapshot.state))
+            _apply_yjs_update(document, bytes(snapshot.state))
             compacted_through_id = snapshot.compacted_through_id
         updates = DocumentUpdate.objects.filter(
             document_id=self.document_id, id__gt=compacted_through_id
         ).order_by("id").values_list("update", flat=True)
         for update in updates:
-            apply_update(document, bytes(update))
+            _apply_yjs_update(document, bytes(update))
         return (
-            encode_state_as_update(document, state_vector),
+            _encode_yjs_state(document, state_vector, "Invalid Yjs state vector"),
             encode_state_vector(document),
         )
