@@ -2,9 +2,9 @@
 
 **Write together. Stay in sync. Make every document better.**
 
-CoEdit is an AI-assisted, real-time collaborative document editor. It brings rich-text editing, CRDT-based synchronization, persistent document storage, and intelligent writing assistance into one collaborative writing experience.
+CoEdit is a real-world collaborative document editing application built to reflect a practical production use case for teams that need shared writing, live coordination, and AI-assisted drafting in a single workflow.
 
-The goal is simple: make it easier for people to create, refine, and work on documents together—without losing the flow of writing.
+It brings rich-text editing, CRDT-based synchronization, persistent document storage, and intelligent writing assistance together in a product-style experience designed for everyday collaboration—not as a toy demo or classroom exercise.
 
 ---
 
@@ -26,7 +26,7 @@ The goal is simple: make it easier for people to create, refine, and work on doc
 
 ## Overview
 
-Traditional document workflows can make collaboration feel fragmented: people work in separate copies, changes arrive at different times, and combining edits becomes a task of its own. CoEdit is designed around a shared editing experience.
+In real team workflows, document collaboration often breaks down when people work in parallel copies, edits arrive at different times, and manual consolidation becomes a bottleneck. CoEdit is designed as a practical shared editing experience for real-world document work.
 
 It combines four central capabilities:
 

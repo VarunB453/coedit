@@ -1,14 +1,14 @@
-FROM python:3.10-slim
+# FROM python:3.10-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src
+# ENV PYTHONDONTWRITEBYTECODE=1 \
+#     PYTHONUNBUFFERED=1 \
+#     PYTHONPATH=/app/src
 
-WORKDIR /app
+# WORKDIR /app
 
-COPY apps/server/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# COPY apps/server/requirements.txt ./requirements.txt
+# RUN pip install --no-cache-dir -r requirements.txt
 
-COPY apps/server/ ./
+# COPY apps/server/ ./
 
-EXPOSE 8000
+# EXPOSE 8000
