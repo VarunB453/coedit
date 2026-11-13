@@ -3,7 +3,6 @@ services:
     build:
       context: ./apps/server
       dockerfile: Dockerfile
-    command: sh -c "python manage.py migrate && daphne -b 0.0.0.0 -p 8000 core.asgi:application"
     environment:
       DEBUG: "true"
       SECRET_KEY: ${SECRET_KEY:-unsafe-local-development-key}
