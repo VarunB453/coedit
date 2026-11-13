@@ -25,11 +25,6 @@ const AuthScreen = ({
   <main className="auth-screen">
     <div className="auth-panel">
       <div className="auth-hero">
-        <div className="auth-brand">
-          <span className="brand-mark">W</span>
-          <span>CoEdit</span>
-        </div>
-        <p className="eyebrow">Collaborative workspace</p>
         <h1>Write together in real time.</h1>
         <p className="auth-copy">
           Create polished product notes, launch plans, and strategy docs with a calm, focused workspace built for teams.
