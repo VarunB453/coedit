@@ -1,3 +1,5 @@
+from django.http import JsonResponse
+
 from .ai import stream_completion
 from modules.ai import views as ai_views
 from modules.auth.views import (
@@ -32,6 +34,10 @@ from modules.workspaces.views import (
 )
 
 MAX_CONTENT_BYTES = 1_000_000
+
+
+def health_check(request):
+    return JsonResponse({"status": "ok"})
 
 
 def ai_providers(request):

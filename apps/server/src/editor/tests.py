@@ -66,6 +66,12 @@ class WorkspaceFileApiTests(TestCase):
             content_type="application/json",
         )
 
+    def test_root_health_check(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+        self.assertEqual(self.client.head("/").status_code, 200)
+
     def test_registration_login_and_logout_use_authenticated_sessions(self):
         client = Client(enforce_csrf_checks=True)
         csrf = client.get("/api/csrf/").json()["csrfToken"]

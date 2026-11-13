@@ -19,6 +19,7 @@ from django.urls import path
 from editor import views as editor_views
 
 urlpatterns = [
+    path('', editor_views.health_check),
     path('admin/', admin.site.urls),
     path('api/csrf/', editor_views.csrf_token),
     path('api/auth/session/', editor_views.auth_session),
